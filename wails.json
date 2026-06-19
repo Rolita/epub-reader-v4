@@ -1,0 +1,20 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "epub-readest",
+  "outputfilename": "epub-readest-v4",
+  "frontend:install": "pnpm install",
+  "frontend:build": "pnpm run build",
+  "frontend:dev:watcher": "pnpm run dev",
+  "frontend:dev:serverUrl": "auto",
+  "author": {
+    "name": "Rolita",
+    "email": "danqusinge@gmail.com"
+  },
+  "app": {
+    "title": "EPUB Reader",
+    "width": 1200,
+    "height": 800,
+    "frameless": true,
+    "startHidden": false
+  }
+}
