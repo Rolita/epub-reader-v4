@@ -25,6 +25,9 @@ import MinusIcon from '../components/icons/MinusIcon.vue'
 import SquareIcon from '../components/icons/SquareIcon.vue'
 import CloudIcon from '../components/icons/CloudIcon.vue'
 import DownloadIcon from '../components/icons/DownloadIcon.vue'
+import BookmarkIcon from '../components/icons/BookmarkIcon.vue'
+import SaveIcon from '../components/icons/SaveIcon.vue'
+import { handleRestoreProgress as restoreProgressAction, handleSaveProgress as saveProgressAction } from '../composables/useProgressButtons'
 
 interface Tab {
   id: string
@@ -138,8 +141,8 @@ const toggleWebDav = () => {
 }
 
 // 主题保存后关闭标签并打开主题侧边栏
-const handleThemeSaved = (tabId: string) => {
-  closeTab(tabId)
+const handleThemeSaved = async (tabId: string) => {
+  await closeTab(tabId)
   switchSidebar('theme')
 }
 
@@ -199,6 +202,24 @@ const handleDownloadFromCloud = async () => {
   } finally {
     isDownloading.value = false
   }
+}
+
+// 气泡通知辅助函数
+const showToast = (message: string, type: 'success' | 'error') => {
+  downloadStatus.value = message
+  downloadStatusType.value = type
+  const duration = type === 'success' ? 1500 : 3000
+  setTimeout(() => { downloadStatus.value = '' }, duration)
+}
+
+// 恢复阅读进度
+const handleRestoreProgress = async () => {
+  await restoreProgressAction(activeTab.value, readerRef.value, showToast)
+}
+
+// 保存阅读进度
+const handleSaveProgress = async () => {
+  await saveProgressAction(activeTab.value, readerRef.value, showToast)
 }
 
 // 显示创建书架提示
@@ -369,11 +390,15 @@ const openReaderTab = async (book: any) => {
   switchSidebar('toc')
 }
 
-const closeTab = (tabId: string) => {
+const closeTab = async (tabId: string) => {
   const index = tabs.value.findIndex(t => t.id === tabId)
   if (index !== -1) {
     const closingTab = tabs.value[index]
     const isActive = activeTabId.value === tabId
+    // 关闭当前活跃的阅读器标签前保存进度
+    if (isActive && closingTab.type === 'reader') {
+      await readerRef.value?.saveProgress?.()
+    }
     tabs.value.splice(index, 1)
     
     // 如果关闭的是阅读器标签，清空目录
@@ -460,12 +485,12 @@ const switchTab = (tabId: string) => {
 // ========== 快捷键功能 ==========
 
 // 处理键盘事件
-const handleKeyDown = (e: KeyboardEvent) => {
+const handleKeyDown = async (e: KeyboardEvent) => {
   // Ctrl+W - 关闭当前标签页
   if (e.ctrlKey && e.key === 'w') {
     e.preventDefault()
     if (activeTabId.value) {
-      closeTab(activeTabId.value)
+      await closeTab(activeTabId.value)
       console.log('快捷键: Ctrl+W - 关闭当前标签页')
     }
   }
@@ -540,9 +565,9 @@ const hideContextMenu = () => {
   contextMenuTabId.value = null
 }
 
-const handleCloseTabWithContext = () => {
+const handleCloseTabWithContext = async () => {
   if (contextMenuTabId.value) {
-    closeTab(contextMenuTabId.value)
+    await closeTab(contextMenuTabId.value)
   }
   hideContextMenu()
 }
@@ -614,7 +639,9 @@ const toggleMaximize = () => {
   }
 }
 
-const closeWindow = () => {
+const closeWindow = async () => {
+  // 关闭前保存当前阅读进度
+  await readerRef.value?.saveProgress?.()
   const w = window as any
   // 使用 Quit() 代替 WindowClose()，这是最稳定的关闭方式
   if (w.runtime && w.runtime.Quit) {
@@ -675,6 +702,16 @@ onUnmounted(() => {
           :disabled="isDownloading"
           title="从云端下载"
         ><DownloadIcon :size="22" /></button>
+        <button 
+          class="func-btn" 
+          @click="handleRestoreProgress" 
+          title="恢复阅读进度"
+        ><BookmarkIcon :size="22" /></button>
+        <button 
+          class="func-btn" 
+          @click="handleSaveProgress" 
+          title="保存阅读进度"
+        ><SaveIcon :size="22" /></button>
       </div>
       
       <div class="function-bottom">
@@ -1036,7 +1073,8 @@ onUnmounted(() => {
   white-space: nowrap;
   position: relative;
   user-select: none;
-  -webkit-app-region: drag;
+  /* Wails v2 官方不可拖拽 API - Tab 自身不参与窗口拖拽 */
+  --wails-draggable: no-drag;
   /* 自适应收缩：优先根据内容宽度显示，空间不足时收缩 */
   flex-shrink: 1;
   flex-grow: 0;

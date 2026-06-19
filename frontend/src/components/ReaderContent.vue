@@ -56,6 +56,7 @@ import LoadingOverlay from './LoadingOverlay.vue';
 import { useBookStore, TocItem } from '../stores/book';
 import { useSettingsStore } from '../stores/settings';
 import { useThemeStore } from '../stores/theme';
+import { saveReaderProgress, restoreReaderProgress } from '../composables/useReaderProgress';
 
 const props = defineProps<{ filePath: string }>();
 const viewerContainer = ref<HTMLElement | null>(null);
@@ -196,7 +197,7 @@ const injectImageClickHandler = () => {
 let book: any = null;
 let rendition: any = null;
 let isScrolling = false; // 防抖标志位
-let saveTimer: any = null; // 进度保存防抖计时器
+let autoSaveTimer: any = null; // 自动保存进度定时器
 
 // 加载状态
 const isLoading = ref(true)
@@ -426,11 +427,7 @@ const initReader = async () => {
         spread: 'always',
       });
 
-      // 5. 从 Go 读取上一次的 CFI
-      // @ts-ignore
-      const savedCfi = await window.go.main.App.GetProgress(props.filePath);
-
-      // 6. 注入滚轮监听钩子
+      // 5. 注入滚轮监听钩子
       rendition.hooks.content.register((contents: any) => {
         contents.window.addEventListener('wheel', (event: WheelEvent) => {
           if (isScrolling) return;
@@ -465,58 +462,23 @@ const initReader = async () => {
         }
       });
 
-      // 9. 监听翻页事件并"防抖"保存进度
-      rendition.on('relocated', (location: any) => {
-        const cfi = location.start.cfi;
-        const percentage = location.start.percentage || 0;
-        
-        // 防抖处理：停止翻页后延迟保存，避免磁盘频繁 IO
-        clearTimeout(saveTimer);
-        saveTimer = setTimeout(async () => {
-          // 构建包含 CFI 和百分比的进度对象
-          const progressData = {
-            cfi: cfi,
-            percentage: percentage,
-            timestamp: Date.now()
-          };
-          // @ts-ignore
-          await window.go.main.App.SaveProgress(props.filePath, JSON.stringify(progressData));
-          console.log("进度已保存至 config.json:", progressData);
-        }, 500);
-      });
+      // 9. 初始化渲染（从书籍开头开始）
+      await rendition.display();
 
-      // 9. 读取并恢复阅读进度（CFI + 百分比双重验证）
-      let savedProgress: any = null;
-      if (savedCfi) {
-        try {
-          savedProgress = JSON.parse(savedCfi);
-          console.log("读取到保存的进度:", savedProgress);
-        } catch (e) {
-          console.error("解析进度数据失败:", e);
-        }
-      }
-      
-      if (savedProgress && savedProgress.cfi) {
-        // 优先使用 CFI 跳转
-        await rendition.display(savedProgress.cfi);
-        
-        // 验证跳转后的百分比是否匹配
-        const currentLocation = rendition.currentLocation();
-        const currentPercentage = currentLocation.start.percentage || 0;
-        
-        if (savedProgress.percentage && Math.abs(currentPercentage - savedProgress.percentage) > 0.05) {
-          console.warn("CFI 漂移检测到！使用百分比兜底跳转");
-          // 使用百分比生成新的 CFI 进行兜底
-          if (book.locations) {
-            const fallbackCfi = book.locations.cfiFromPercentage(savedProgress.percentage);
-            if (fallbackCfi) {
-              await rendition.display(fallbackCfi);
-              console.log("百分比兜底跳转完成:", savedProgress.percentage);
-            }
+      // 9.5 自动恢复阅读进度（模拟手动点击恢复按钮，连续两次）
+      try {
+        // @ts-ignore
+        const progressJSON = await window.go.main.App.GetProgress(props.filePath)
+        if (progressJSON) {
+          const progress = JSON.parse(progressJSON)
+          if (progress.cfi) {
+            await restoreReaderProgress(rendition, progress.cfi, () => viewerContainer.value?.focus())
+            await restoreReaderProgress(rendition, progress.cfi, () => viewerContainer.value?.focus())
+            console.log('已自动恢复阅读进度:', progress.cfi)
           }
         }
-      } else {
-        await rendition.display();
+      } catch (e) {
+        console.error('自动恢复进度失败:', e)
       }
 
       // 10. 在 display 完成后手动再应用一次（兜底）
@@ -691,27 +653,45 @@ const jumpTo = (href: string) => {
 };
 
 // 暴露方法给父组件调用
-defineExpose({ jumpTo });
+defineExpose({
+  jumpTo,
+  restoreProgress: (cfi: string) => restoreReaderProgress(rendition, cfi, () => viewerContainer.value?.focus()),
+  saveProgress: () => saveReaderProgress(rendition, props.filePath)
+});
+
+// 程序关闭前保存进度
+const handleBeforeUnload = () => {
+  saveReaderProgress(rendition, props.filePath)
+}
 
 onMounted(async () => {
   await initReader();
   window.addEventListener('keydown', handleKey);
   window.addEventListener('resize', handleResize);
+  window.addEventListener('beforeunload', handleBeforeUnload);
   document.addEventListener('fullscreenchange', handleFullscreenChange);
   document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
   document.addEventListener('mozfullscreenchange', handleFullscreenChange);
   document.addEventListener('MSFullscreenChange', handleFullscreenChange);
+  // 每 10 分钟自动保存阅读进度
+  autoSaveTimer = setInterval(() => {
+    saveReaderProgress(rendition, props.filePath)
+  },10 * 60 * 1000)
 });
 
 onUnmounted(() => {
   window.removeEventListener('keydown', handleKey);
   window.removeEventListener('resize', handleResize);
+  window.removeEventListener('beforeunload', handleBeforeUnload);
   document.removeEventListener('fullscreenchange', handleFullscreenChange);
   document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
   document.removeEventListener('mozfullscreenchange', handleFullscreenChange);
   document.removeEventListener('MSFullscreenChange', handleFullscreenChange);
   clearTimeout(resizeTimer);
   clearTimeout(hideControlsTimer);
+  clearInterval(autoSaveTimer); // 清除自动保存定时器
+  // Tab 关闭时保存阅读进度
+  saveReaderProgress(rendition, props.filePath)
   if (rendition) rendition.destroy();
 });
 
