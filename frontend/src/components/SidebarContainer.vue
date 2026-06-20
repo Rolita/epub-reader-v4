@@ -31,6 +31,7 @@ import TocSidebar from './TocSidebar.vue';
 import LayoutSidebar from './LayoutSidebar.vue';
 import ThemeSidebar from './ThemeSidebar.vue';
 import WebDavSidebar from './WebDavSidebar.vue';
+import BookshelfLayoutSidebar from './BookshelfLayoutSidebar.vue';
 import { useSettingsStore } from '../stores/settings';
 
 const settingsStore = useSettingsStore();
@@ -74,6 +75,7 @@ const switchView = (viewName: string) => {
   if (viewName === 'layout') currentComponent.value = LayoutSidebar;
   if (viewName === 'theme') currentComponent.value = ThemeSidebar;
   if (viewName === 'webdav') currentComponent.value = WebDavSidebar;
+  if (viewName === 'bookshelf-layout') currentComponent.value = BookshelfLayoutSidebar;
 };
 
 // 处理目录跳转，传递给父组件

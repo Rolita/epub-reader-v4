@@ -10,6 +10,9 @@ export const useSettingsStore = defineStore('settings', () => {
   const indent = ref(2);               // 首行缩进 (em)
   const textAlign = ref('justify');     // 两端对齐
   const sidebarWidth = ref(240);       // 侧边栏宽度 (px)
+  const bookshelfColumns = ref(6);     // 书架列数 (3-8)
+  const coverGap = ref(12);           // 封面间距 (8/12/20)
+  const sortBy = ref('default');      // 排序方式: default/title-asc/title-desc/author-asc/author-desc
 
   return {
     fontSize,
@@ -19,7 +22,10 @@ export const useSettingsStore = defineStore('settings', () => {
     letterSpacing,
     indent,
     textAlign,
-    sidebarWidth
+    sidebarWidth,
+    bookshelfColumns,
+    coverGap,
+    sortBy
   };
 }, {
   persist: true

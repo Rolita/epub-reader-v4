@@ -186,6 +186,21 @@ type FileInfo struct {
 	ModTime int64  `json:"modTime"` // Unix timestamp
 }
 
+// OpenFileLocation 打开文件所在的文件夹并选中文件
+func (a *App) OpenFileLocation(filePath string) error {
+	// 规范化路径：将所有斜杠统一为反斜杠（Windows）
+	normalizedPath := filepath.FromSlash(filePath)
+
+	// 检查文件是否存在
+	if _, err := os.Stat(normalizedPath); err != nil {
+		return fmt.Errorf("文件不存在: %s", normalizedPath)
+	}
+
+	// 使用 Windows explorer 命令打开文件夹并选中文件
+	cmd := exec.Command("explorer", "/select,", normalizedPath)
+	return cmd.Start()
+}
+
 // GetFileInfo 获取文件信息
 func (a *App) GetFileInfo(filePath string) (*FileInfo, error) {
 	info, err := os.Stat(filePath)

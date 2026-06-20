@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed, ref, onMounted, watch, onUnmounted } from 'vue'
 import { useLibraryStore } from '../stores/library'
+import { useSettingsStore } from '../stores/settings'
 import { importBook, importBooks, importBooksFromFolder, type ImportResult } from '../utils/bookImporter'
 import BookIcon from './icons/BookIcon.vue'
 import CloudIcon from './icons/CloudIcon.vue'
 import DownloadIcon from './icons/DownloadIcon.vue'
 import FileIcon from './icons/FileIcon.vue'
-import FolderIcon from './icons/FolderIcon.vue'
+import { naturalCompare } from '../composables/useNaturalSort'
 import ListIcon from './icons/ListIcon.vue'
 import PlusIcon from './icons/PlusIcon.vue'
 import BookGroup from './BookGroup.vue'
@@ -19,9 +20,11 @@ const emit = defineEmits<{
   (e: 'toggle-webdav'): void
   (e: 'open-book-detail', book: any): void
   (e: 'open-group', group: Group): void
+  (e: 'close-tab-menu'): void
 }>()
 
 const store = useLibraryStore()
+const settingsStore = useSettingsStore()
 
 // WebDAV侧边栏状态
 const isWebdavOpen = ref(false)
@@ -88,39 +91,55 @@ const groups = computed(() => store.currentGroups)
 // 根级别的所有项目（书籍 + 分组）
 const rootItems = computed(() => store.rootItems)
 
-// 根据搜索关键词过滤书籍和分组
+const sortItems = (items: any[]) => {
+  const sortBy = settingsStore.sortBy
+  if (sortBy === 'default') return items
+  
+  return [...items].sort((a, b) => {
+    if (a.type === 'group' && b.type !== 'group') return -1
+    if (a.type !== 'group' && b.type === 'group') return 1
+    
+    const aTitle = a.title || ''
+    const bTitle = b.title || ''
+    const aAuthor = a.author || ''
+    const bAuthor = b.author || ''
+    
+    let result = 0
+    if (sortBy === 'title-asc') result = naturalCompare(aTitle, bTitle)
+    else if (sortBy === 'title-desc') result = naturalCompare(bTitle, aTitle)
+    else if (sortBy === 'author-asc') result = naturalCompare(aAuthor, bAuthor)
+    else if (sortBy === 'author-desc') result = naturalCompare(bAuthor, aAuthor)
+    return result
+  })
+}
+
 const filteredItems = computed(() => {
   if (!searchKeyword.value.trim()) {
-    return rootItems.value
+    return sortItems(rootItems.value)
   }
   
   const keyword = searchKeyword.value.toLowerCase().trim()
   const results: any[] = []
   const addedBookIds = new Set<string>()
   
-  // 遍历所有根级项目
   rootItems.value.forEach(item => {
     if (item.type === 'group') {
-      // 检查分组名称
       const name = (item.name || '').toLowerCase()
       if (name.includes(keyword)) {
         results.push(item)
       }
-      // 检查并添加分组内匹配的书籍
       const booksInGroup = books.value.filter((b: any) => b.groupId === item.id)
       booksInGroup.forEach((book: any) => {
         const title = (book.title || '').toLowerCase()
         const author = (book.author || '').toLowerCase()
         if (title.includes(keyword) || author.includes(keyword)) {
           if (!addedBookIds.has(book.id)) {
-            // 添加书籍时，标记它属于某个分组
             results.push({ ...book, type: 'book', inGroup: item.name })
             addedBookIds.add(book.id)
           }
         }
       })
     } else {
-      // 根级书籍检查
       const title = (item.title || '').toLowerCase()
       const author = (item.author || '').toLowerCase()
       if (title.includes(keyword) || author.includes(keyword)) {
@@ -132,7 +151,7 @@ const filteredItems = computed(() => {
     }
   })
   
-  return results
+  return sortItems(results)
 })
 
 // 只获取当前的书籍（不包括分组）
@@ -586,6 +605,14 @@ const downloadBook = async (book: any) => {
     return
   }
   
+  // 检查本地是否已有该书籍文件
+  const exists = await isBookDownloaded(book)
+  if (exists) {
+    console.log('该书籍已存在，跳过下载:', book.title)
+    updateBookStatus(book, true)
+    return
+  }
+  
   downloadingBooks.value.add(bookKey)
   
   try {
@@ -651,14 +678,14 @@ watch([currentShelf, books], async () => {
 onMounted(async () => {
   await checkAllBooksStatus()
   document.addEventListener('click', handleClickOutside)
-  document.addEventListener('click', handleClickOutsideContextMenu)
-  document.addEventListener('click', handleClickOutsideGroupContextMenu)
+  document.addEventListener('contextmenu', handleClickOutsideContextMenu)
+  document.addEventListener('contextmenu', handleClickOutsideGroupContextMenu)
 })
 
 onUnmounted(() => {
   document.removeEventListener('click', handleClickOutside)
-  document.removeEventListener('click', handleClickOutsideContextMenu)
-  document.removeEventListener('click', handleClickOutsideGroupContextMenu)
+  document.removeEventListener('contextmenu', handleClickOutsideContextMenu)
+  document.removeEventListener('contextmenu', handleClickOutsideGroupContextMenu)
 })
 
 const handleDeleteBook = (bookId: string) => {
@@ -679,6 +706,11 @@ const showContextMenu = (event: MouseEvent, bookId: string) => {
   
   // 在选择模式下禁用右键菜单
   if (isSelectMode.value) return
+  
+  // 关闭其他右键菜单
+  closeGroupContextMenu()
+  closeContextMenu()
+  emit('close-tab-menu')
   
   contextMenu.value = {
     show: true,
@@ -720,6 +752,27 @@ const handleContextMenuDetail = () => {
   }
   
   closeContextMenu()
+}
+
+// 打开文件所在位置
+const handleOpenFileLocation = async () => {
+  if (!contextMenu.value.bookId) return
+  
+  // 找到对应的书籍对象
+  const book = currentBooksOnly.value.find((b: any) => b.id === contextMenu.value.bookId)
+  if (!book || !book.filePath) {
+    closeContextMenu()
+    return
+  }
+  
+  closeContextMenu()
+  
+  try {
+    // @ts-ignore
+    await window.go.main.App.OpenFileLocation(book.filePath)
+  } catch (e) {
+    console.error('打开文件位置失败:', e)
+  }
 }
 
 // 处理移动到分组
@@ -874,6 +927,11 @@ const showGroupContextMenu = (event: MouseEvent, groupId: string) => {
   event.stopPropagation()
   
   if (isSelectMode.value) return
+  
+  // 关闭其他右键菜单
+  closeContextMenu()
+  closeGroupContextMenu()
+  emit('close-tab-menu')
   
   groupContextMenu.value = {
     show: true,
@@ -1036,7 +1094,7 @@ const handleClickOutsideContextMenu = (event: MouseEvent) => {
         </button>
       </div>
       
-      <div v-else class="book-grid">
+      <div v-else class="book-grid" :style="{ gridTemplateColumns: `repeat(${settingsStore.bookshelfColumns}, minmax(130px, 1fr))`, gap: `${settingsStore.coverGap}px` }">
         <template v-for="item in filteredItems" :key="item.id">
           <!-- 分组卡片 -->
           <BookGroup 
@@ -1102,6 +1160,10 @@ const handleClickOutsideContextMenu = (event: MouseEvent) => {
       
       <button class="context-menu-item" @click="handleContextMenuMoveToGroup">
         书籍分组
+      </button>
+      
+      <button class="context-menu-item" @click="handleOpenFileLocation">
+        打开当前位置
       </button>
       
       <button class="context-menu-item danger" @click="handleContextMenuDelete">
@@ -1708,7 +1770,6 @@ const handleClickOutsideContextMenu = (event: MouseEvent) => {
 /* 书籍网格 */
 .book-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(130px, 150px));
   gap: 28px 24px;
 }
 
@@ -1803,14 +1864,21 @@ const handleClickOutsideContextMenu = (event: MouseEvent) => {
   font-size: 0.82rem;
   color: var(--text-secondary);
   text-align: center;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
   font-weight: 400;
   letter-spacing: 0;
   padding: 0 2px;
   line-height: 1.4;
+  overflow: hidden;
+
+  /* WebKit 内核（Chrome/Edge/Safari） */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+
+  /* W3C 标准属性（Firefox 等，消除编辑器警告） */
+  display: box;
+  line-clamp: 2;
+  box-orient: vertical;
 }
 
 /* 分组指示器 */

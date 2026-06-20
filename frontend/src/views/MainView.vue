@@ -27,6 +27,7 @@ import CloudIcon from '../components/icons/CloudIcon.vue'
 import DownloadIcon from '../components/icons/DownloadIcon.vue'
 import BookmarkIcon from '../components/icons/BookmarkIcon.vue'
 import SaveIcon from '../components/icons/SaveIcon.vue'
+import LayoutGridIcon from '../components/icons/LayoutGridIcon.vue'
 import { handleRestoreProgress as restoreProgressAction, handleSaveProgress as saveProgressAction } from '../composables/useProgressButtons'
 
 interface Tab {
@@ -67,9 +68,37 @@ const getTabIcon = (icon?: string) => {
 }
 const activeTabId = ref<string>('')
 const sidebarRef = ref<InstanceType<typeof SidebarContainer> | null>(null)
-const readerRef = ref<InstanceType<typeof ReaderContent> | null>(null)
+const readerRefs = new Map<string, InstanceType<typeof ReaderContent>>()
 const activeSidebar = ref<string>('shelf')
 const tabRefreshKeys = ref<Record<string, number>>({})
+
+// 获取当前激活的阅读器组件
+const getActiveReader = () => {
+  if (!activeTabId.value) return null
+  return readerRefs.get(activeTabId.value)
+}
+
+// 监听 tab 切换，当从阅读器切换走时自动保存进度，切换到阅读器时自动恢复进度
+watch(activeTabId, (newTabId, oldTabId) => {
+  // 从阅读器切换走时保存进度
+  if (oldTabId) {
+    const oldTab = tabs.value.find(t => t.id === oldTabId)
+    if (oldTab?.type === 'reader') {
+      const oldReader = readerRefs.get(oldTabId)
+      oldReader?.saveProgress()
+    }
+  }
+  
+  // 切换到阅读器时恢复进度并更新目录侧边栏
+  if (newTabId) {
+    const newTab = tabs.value.find(t => t.id === newTabId)
+    if (newTab?.type === 'reader') {
+      const newReader = readerRefs.get(newTabId)
+      newReader?.updateBookStore()
+      handleRestoreProgress()
+    }
+  }
+})
 
 // WebDAV 下载状态
 const isDownloading = ref(false)
@@ -110,7 +139,7 @@ const contextMenuTabId = ref<string | null>(null)
 
 // 处理目录跳转
 const handleJump = (href: string) => {
-  readerRef.value?.jumpTo(href);
+  getActiveReader()?.jumpTo(href);
 };
 
 // 监听侧边栏选中变化
@@ -214,12 +243,12 @@ const showToast = (message: string, type: 'success' | 'error') => {
 
 // 恢复阅读进度
 const handleRestoreProgress = async () => {
-  await restoreProgressAction(activeTab.value, readerRef.value, showToast)
+  await restoreProgressAction(activeTab.value, getActiveReader() || null, showToast)
 }
 
 // 保存阅读进度
 const handleSaveProgress = async () => {
-  await saveProgressAction(activeTab.value, readerRef.value, showToast)
+  await saveProgressAction(activeTab.value, getActiveReader() || null, showToast)
 }
 
 // 显示创建书架提示
@@ -353,8 +382,6 @@ const openGroupTab = (group: any) => {
     tabs.value.push(newTab)
     activeTabId.value = newTab.id
   }
-  // 切换到书架侧边栏
-  switchSidebar('shelf')
   // 激活当前分组
   store.setActiveGroup(group.id)
 }
@@ -397,9 +424,15 @@ const closeTab = async (tabId: string) => {
     const isActive = activeTabId.value === tabId
     // 关闭当前活跃的阅读器标签前保存进度
     if (isActive && closingTab.type === 'reader') {
-      await readerRef.value?.saveProgress?.()
+      const reader = readerRefs.get(tabId)
+      await reader?.saveProgress?.()
     }
     tabs.value.splice(index, 1)
+    
+    // 清理阅读器组件引用
+    if (closingTab.type === 'reader') {
+      readerRefs.delete(tabId)
+    }
     
     // 如果关闭的是阅读器标签，清空目录
     if (closingTab.type === 'reader') {
@@ -641,7 +674,8 @@ const toggleMaximize = () => {
 
 const closeWindow = async () => {
   // 关闭前保存当前阅读进度
-  await readerRef.value?.saveProgress?.()
+  const reader = getActiveReader()
+  await reader?.saveProgress?.()
   const w = window as any
   // 使用 Quit() 代替 WindowClose()，这是最稳定的关闭方式
   if (w.runtime && w.runtime.Quit) {
@@ -654,10 +688,12 @@ const closeWindow = async () => {
 onMounted(() => {
   store.scanShelves()
   document.addEventListener('click', handleClickOutside)
+  document.addEventListener('contextmenu', handleClickOutside)
 })
 
 onUnmounted(() => {
   document.removeEventListener('click', handleClickOutside)
+  document.removeEventListener('contextmenu', handleClickOutside)
 })
 </script>
 
@@ -690,6 +726,12 @@ onUnmounted(() => {
           @click="switchSidebar('theme')" 
           title="主题"
         ><SparklesIcon :size="22" /></button>
+        <button 
+          class="func-btn" 
+          :class="{ active: activeSidebar === 'bookshelf-layout' }"
+          @click="switchSidebar('bookshelf-layout')" 
+          title="书架布局"
+        ><LayoutGridIcon :size="22" /></button>
         <button 
           class="func-btn" 
           @click="handleRefresh" 
@@ -790,6 +832,7 @@ onUnmounted(() => {
           @toggle-webdav="toggleWebDav"
           @open-book-detail="openBookDetailTab"
           @open-group="openGroupTab"
+          @close-tab-menu="hideContextMenu"
         />
         
         <!-- 分组详情内容 -->
@@ -799,6 +842,7 @@ onUnmounted(() => {
           @open-book="openReaderTab"
           @toggle-webdav="toggleWebDav"
           @open-book-detail="openBookDetailTab"
+          @close-tab-menu="hideContextMenu"
         />
         
         <!-- 设置内容 -->
@@ -815,20 +859,27 @@ onUnmounted(() => {
           @saved="handleThemeSaved(activeTab.id)"
         />
         
-        <!-- 阅读器内容 -->
-        <ReaderContent 
-          v-else-if="activeTab.type === 'reader' && activeTab.filePath"
-          :file-path="activeTab.filePath"
-          :key="'reader-' + activeTab.id + '-' + (tabRefreshKeys[activeTab.id] || 0)"
-          ref="readerRef"
-        />
-        
         <!-- 书籍详情内容 -->
         <BookDetailTab
           v-else-if="activeTab.type === 'book-detail' && activeTab.bookData"
           :book="activeTab.bookData"
           :key="'book-detail-' + activeTab.id + '-' + (tabRefreshKeys[activeTab.id] || 0)"
         />
+        
+        <!-- 阅读器内容 - 使用独立容器，v-show 保持组件存活 -->
+        <div v-show="activeTab?.type === 'reader'" class="reader-container">
+          <template v-for="tab in tabs" :key="'reader-container-' + tab.id">
+            <ReaderContent 
+              v-if="tab.type === 'reader' && tab.filePath"
+              v-show="activeTabId === tab.id"
+              :file-path="tab.filePath"
+              :ref="(el: any) => { 
+                if (el) readerRefs.set(tab.id, el)
+                else readerRefs.delete(tab.id)
+              }"
+            />
+          </template>
+        </div>
       </div>
       
       <!-- 下载状态气泡提示 -->
@@ -1184,6 +1235,12 @@ onUnmounted(() => {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+}
+
+.reader-container {
+  flex: 1;
+  width: 100%;
+  height: 100%;
 }
 
 /* 右键菜单 */

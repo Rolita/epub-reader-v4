@@ -14,19 +14,7 @@
       <button @click="nextPage" class="nav-btn right">〉</button>
     </div>
 
-    <!-- 全屏控制栏 -->
-    <div 
-      v-if="!isLoading && isFullscreen" 
-      class="fullscreen-controls" 
-      :class="{ 'hidden': !showFullscreenControls }"
-      @mouseenter="showControls"
-    >
-      <button @click="exitFullscreen" class="fullscreen-btn exit">
-        <span class="fullscreen-icon">⟲</span>
-        <span class="fullscreen-text">退出全屏</span>
-      </button>
-      <div class="fullscreen-hint">按 Esc 或 F11 退出全屏</div>
-    </div>
+
 
     <!-- 非全屏时的全屏按钮 -->
     <button 
@@ -35,7 +23,7 @@
       class="fullscreen-toggle-btn"
       title="全屏阅读 (F11)"
     >
-      ➤
+      <FullscreenIcon :size="24" />
     </button>
 
     <!-- 图片预览组件 -->
@@ -57,6 +45,7 @@ import { useBookStore, TocItem } from '../stores/book';
 import { useSettingsStore } from '../stores/settings';
 import { useThemeStore } from '../stores/theme';
 import { saveReaderProgress, restoreReaderProgress } from '../composables/useReaderProgress';
+import FullscreenIcon from './icons/FullscreenIcon.vue';
 
 const props = defineProps<{ filePath: string }>();
 const viewerContainer = ref<HTMLElement | null>(null);
@@ -68,8 +57,6 @@ const previewImageAlt = ref('')
 
 // 全屏状态
 const isFullscreen = ref(false)
-const showFullscreenControls = ref(true)
-let hideControlsTimer: any = null
 
 // 图片预览方法
 const openImagePreview = (src: string, alt: string = '') => {
@@ -230,7 +217,10 @@ const applyTypography = () => {
       'text-indent': `${settingsStore.indent}em !important`,
       'margin-bottom': `${settingsStore.paragraphGap}px !important`,
       'font-size': `${settingsStore.fontSize}px !important`,
-      'line-height': settingsStore.lineHeight + ' !important'
+      'line-height': settingsStore.lineHeight + ' !important',
+      'font-family': settingsStore.fontFamily + ' !important',
+      'text-align': settingsStore.textAlign + ' !important',
+      'letter-spacing': `${settingsStore.letterSpacing}px !important`
     }
   });
 
@@ -244,15 +234,20 @@ const injectPowerfulStyles = () => {
 
   const css = `
    /* === 专业排版修正公式 === */
-    /* 1. 强制重置所有段落的边距，交给段间距逻辑处理 */
-    p {
-      margin-top: 0 !important;      /* 严禁使用上边距，防止叠加 */
-      margin-bottom: ${settingsStore.paragraphGap}px !important; /* 段间距：只用下边距，统一间距感 */
-      /* 2. 行间距：使用纯倍数，保持阅读舒适度 */
-      line-height: ${settingsStore.lineHeight} !important;
-      /* 3. 中文排版精髓：首行缩进 */
-      text-indent: ${settingsStore.indent}em !important;
-    }
+     /* 1. 强制重置所有段落的边距，交给段间距逻辑处理 */
+     p {
+       margin-top: 0 !important;       /* 严禁使用上边距，防止叠加 */
+       margin-bottom: ${settingsStore.paragraphGap}px !important; /* 段间距：只用下边距，统一间距感 */
+       /* 2. 行间距：使用纯倍数，保持阅读舒适度 */
+       line-height: ${settingsStore.lineHeight} !important;
+       /* 3. 中文排版精髓：首行缩进 */
+       text-indent: ${settingsStore.indent}em !important;
+       /* 4. 强制覆盖段落字体，防止 EPUB 内部样式干扰 */
+       font-family: ${settingsStore.fontFamily} !important;
+       font-size: ${settingsStore.fontSize}px !important;
+       text-align: ${settingsStore.textAlign} !important;
+       letter-spacing: ${settingsStore.letterSpacing}px !important;
+     }
     /* 4. 强力覆盖所有文本元素的字号和字体 */
     body, div, span, h1, h2, h3, h4, h5, h6,
     li, td, th, blockquote, pre, a, strong, em,
@@ -335,29 +330,31 @@ const applyTheme = () => {
   `);
 };
 
-// 清理内联样式
+// 清理内联样式并重新应用排版
 const clearInlineStyles = () => {
   if (!rendition) return;
   
-  // 在每一章渲染后清理内联样式
   rendition.on('rendered', (section: any) => {
     const doc = section.document;
     if (!doc) return;
     
     const elements = doc.querySelectorAll('*');
     elements.forEach((el: any) => {
-      // 移除内联的颜色和背景色
       el.style.removeProperty('color');
       el.style.removeProperty('background-color');
       el.style.removeProperty('background');
       el.style.removeProperty('text-shadow');
-      
-      // 移除内联的字号和行高（解决硬编码样式问题）
       el.style.removeProperty('font-size');
       el.style.removeProperty('line-height');
       el.style.removeProperty('font-family');
       el.style.removeProperty('font-weight');
       el.style.removeProperty('text-align');
+    });
+    
+    requestAnimationFrame(() => {
+      if (rendition && rendition.themes) {
+        injectPowerfulStyles();
+      }
     });
   });
 };
@@ -538,40 +535,21 @@ const enterFullscreen = () => {
 
   requestFullscreen().then(() => {
     isFullscreen.value = true;
-    showFullscreenControls.value = true;
-    startHideControlsTimer();
     
-    // 延迟重新渲染，确保全屏切换完成
     setTimeout(() => {
       if (rendition) {
         rendition.resize('100%', '100%');
-        console.log('全屏模式下重新渲染完成');
+        applyTypography();
+        applyTheme();
       }
-    }, 300);
+    }, 100);
   }).catch((err: Error) => {
     console.error('进入全屏失败:', err);
   });
 };
 
-// 显示控制栏
-const showControls = () => {
-  showFullscreenControls.value = true;
-  startHideControlsTimer();
-};
-
-// 启动自动隐藏计时器
-const startHideControlsTimer = () => {
-  clearTimeout(hideControlsTimer);
-  hideControlsTimer = setTimeout(() => {
-    showFullscreenControls.value = false;
-  }, 1000);
-};
-
-// 鼠标移动处理
+// 鼠标移动处理（保留用于其他功能）
 const handleMouseMove = () => {
-  if (isFullscreen.value) {
-    showControls();
-  }
 };
 
 // 窗口大小变化处理
@@ -652,11 +630,21 @@ const jumpTo = (href: string) => {
   }
 };
 
+// 更新书籍 store（用于 tab 切换时同步目录侧边栏）
+const updateBookStore = () => {
+  if (book) {
+    const navigation = book.navigation;
+    const toc = navigation ? flattenToc(navigation.toc) : [];
+    bookStore.setActiveBook(props.filePath, toc);
+  }
+};
+
 // 暴露方法给父组件调用
 defineExpose({
   jumpTo,
   restoreProgress: (cfi: string) => restoreReaderProgress(rendition, cfi, () => viewerContainer.value?.focus()),
-  saveProgress: () => saveReaderProgress(rendition, props.filePath)
+  saveProgress: () => saveReaderProgress(rendition, props.filePath),
+  updateBookStore
 });
 
 // 程序关闭前保存进度
@@ -688,9 +676,7 @@ onUnmounted(() => {
   document.removeEventListener('mozfullscreenchange', handleFullscreenChange);
   document.removeEventListener('MSFullscreenChange', handleFullscreenChange);
   clearTimeout(resizeTimer);
-  clearTimeout(hideControlsTimer);
-  clearInterval(autoSaveTimer); // 清除自动保存定时器
-  // Tab 关闭时保存阅读进度
+  clearInterval(autoSaveTimer);
   saveReaderProgress(rendition, props.filePath)
   if (rendition) rendition.destroy();
 });

@@ -82,6 +82,10 @@ export function OpenConfigDir() {
   return window['go']['main']['App']['OpenConfigDir']();
 }
 
+export function OpenFileLocation(arg1) {
+  return window['go']['main']['App']['OpenFileLocation'](arg1);
+}
+
 export function ReadFile(arg1) {
   return window['go']['main']['App']['ReadFile'](arg1);
 }

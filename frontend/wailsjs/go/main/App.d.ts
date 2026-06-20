@@ -43,6 +43,8 @@ export function LoadWebDavConfig(arg1:string):Promise<string>;
 
 export function OpenConfigDir():Promise<void>;
 
+export function OpenFileLocation(arg1:string):Promise<void>;
+
 export function ReadFile(arg1:string):Promise<string>;
 
 export function RenameShelf(arg1:string,arg2:string):Promise<void>;

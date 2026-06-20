@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed, ref, onMounted, watch, onUnmounted } from 'vue'
 import { useLibraryStore } from '../stores/library'
+import { useSettingsStore } from '../stores/settings'
 import { importBook, importBooks, importBooksFromFolder, type ImportResult } from '../utils/bookImporter'
 import BookIcon from './icons/BookIcon.vue'
 import CloudIcon from './icons/CloudIcon.vue'
 import DownloadIcon from './icons/DownloadIcon.vue'
 import FileIcon from './icons/FileIcon.vue'
+import { naturalCompare } from '../composables/useNaturalSort'
 import ListIcon from './icons/ListIcon.vue'
 import XIcon from './icons/XIcon.vue'
 import FolderIcon from './icons/FolderIcon.vue'
@@ -18,9 +20,11 @@ const emit = defineEmits<{
   (e: 'toggle-webdav'): void
   (e: 'open-book-detail', book: any): void
   (e: 'back'): void
+  (e: 'close-tab-menu'): void
 }>()
 
 const store = useLibraryStore()
+const settingsStore = useSettingsStore()
 
 // WebDAV侧边栏状态
 const isWebdavOpen = ref(false)
@@ -76,18 +80,37 @@ const currentGroup = computed(() => store.activeGroup)
 // 当前分组的书籍列表
 const books = computed(() => store.groupBooks)
 
-// 根据搜索关键词过滤书籍
+const sortBooks = (items: any[]) => {
+  const sortBy = settingsStore.sortBy
+  if (sortBy === 'default') return items
+  
+  return [...items].sort((a, b) => {
+    const aTitle = a.title || ''
+    const bTitle = b.title || ''
+    const aAuthor = a.author || ''
+    const bAuthor = b.author || ''
+    
+    let result = 0
+    if (sortBy === 'title-asc') result = naturalCompare(aTitle, bTitle)
+    else if (sortBy === 'title-desc') result = naturalCompare(bTitle, aTitle)
+    else if (sortBy === 'author-asc') result = naturalCompare(aAuthor, bAuthor)
+    else if (sortBy === 'author-desc') result = naturalCompare(bAuthor, aAuthor)
+    return result
+  })
+}
+
 const filteredBooks = computed(() => {
   if (!searchKeyword.value.trim()) {
-    return books.value
+    return sortBooks(books.value)
   }
   
   const keyword = searchKeyword.value.toLowerCase().trim()
-  return books.value.filter(book => {
+  const results = books.value.filter(book => {
     const title = (book.title || '').toLowerCase()
     const author = (book.author || '').toLowerCase()
     return title.includes(keyword) || author.includes(keyword)
   })
+  return sortBooks(results)
 })
 
 // 正在下载的书籍 ID 列表
@@ -539,6 +562,14 @@ const downloadBook = async (book: any) => {
     return
   }
   
+  // 检查本地是否已有该书籍文件
+  const exists = await isBookDownloaded(book)
+  if (exists) {
+    console.log('该书籍已存在，跳过下载:', book.title)
+    updateBookStatus(book, true)
+    return
+  }
+  
   downloadingBooks.value.add(bookKey)
   
   try {
@@ -596,12 +627,12 @@ watch([store.activeShelf, books], async () => {
 onMounted(async () => {
   await checkAllBooksStatus()
   document.addEventListener('click', handleClickOutside)
-  document.addEventListener('click', handleClickOutsideContextMenu)
+  document.addEventListener('contextmenu', handleClickOutsideContextMenu)
 })
 
 onUnmounted(() => {
   document.removeEventListener('click', handleClickOutside)
-  document.removeEventListener('click', handleClickOutsideContextMenu)
+  document.removeEventListener('contextmenu', handleClickOutsideContextMenu)
 })
 
 const handleDeleteBook = (bookId: string) => {
@@ -620,6 +651,8 @@ const showContextMenu = (event: MouseEvent, bookId: string) => {
   event.stopPropagation()
   
   if (isSelectMode.value) return
+  
+  emit('close-tab-menu')
   
   contextMenu.value = {
     show: true,
@@ -665,6 +698,26 @@ const handleContextMenuDetail = () => {
   }
   
   closeContextMenu()
+}
+
+// 打开文件所在位置
+const handleOpenFileLocation = async () => {
+  if (!contextMenu.value.bookId) return
+  
+  const book = filteredBooks.value.find(b => b.id === contextMenu.value.bookId)
+  if (!book || !book.filePath) {
+    closeContextMenu()
+    return
+  }
+  
+  closeContextMenu()
+  
+  try {
+    // @ts-ignore
+    await window.go.main.App.OpenFileLocation(book.filePath)
+  } catch (e) {
+    console.error('打开文件位置失败:', e)
+  }
 }
 
 // 重命名相关状态
@@ -822,7 +875,7 @@ const handleClickOutsideContextMenu = (event: MouseEvent) => {
         </button>
       </div>
       
-      <div v-else class="book-grid">
+      <div v-else class="book-grid" :style="{ gridTemplateColumns: `repeat(${settingsStore.bookshelfColumns}, minmax(130px, 1fr))`, gap: `${settingsStore.coverGap}px` }">
         <div 
           v-for="book in filteredBooks" 
           :key="book.id" 
@@ -873,6 +926,10 @@ const handleClickOutsideContextMenu = (event: MouseEvent) => {
       
       <button class="context-menu-item" @click="handleContextMenuRemoveFromGroup">
         移出分组
+      </button>
+      
+      <button class="context-menu-item" @click="handleOpenFileLocation">
+        打开当前位置
       </button>
       
       <button class="context-menu-item danger" @click="handleContextMenuDelete">
@@ -1292,7 +1349,6 @@ const handleClickOutsideContextMenu = (event: MouseEvent) => {
 
 .book-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(130px, 150px));
   gap: 28px 24px;
 }
 
