@@ -678,14 +678,14 @@ watch([currentShelf, books], async () => {
 onMounted(async () => {
   await checkAllBooksStatus()
   document.addEventListener('click', handleClickOutside)
-  document.addEventListener('contextmenu', handleClickOutsideContextMenu)
-  document.addEventListener('contextmenu', handleClickOutsideGroupContextMenu)
+  document.addEventListener('click', handleClickOutsideContextMenu)
+  document.addEventListener('click', handleClickOutsideGroupContextMenu)
 })
 
 onUnmounted(() => {
   document.removeEventListener('click', handleClickOutside)
-  document.removeEventListener('contextmenu', handleClickOutsideContextMenu)
-  document.removeEventListener('contextmenu', handleClickOutsideGroupContextMenu)
+  document.removeEventListener('click', handleClickOutsideContextMenu)
+  document.removeEventListener('click', handleClickOutsideGroupContextMenu)
 })
 
 const handleDeleteBook = (bookId: string) => {
@@ -1094,7 +1094,7 @@ const handleClickOutsideContextMenu = (event: MouseEvent) => {
         </button>
       </div>
       
-      <div v-else class="book-grid" :style="{ gridTemplateColumns: `repeat(${settingsStore.bookshelfColumns}, minmax(130px, 1fr))`, gap: `${settingsStore.coverGap}px` }">
+      <div v-else class="book-grid" :style="{ gridTemplateColumns: `repeat(${settingsStore.bookshelfColumns}, minmax(0, 1fr))`, gap: `${settingsStore.coverGap}px` }">
         <template v-for="item in filteredItems" :key="item.id">
           <!-- 分组卡片 -->
           <BookGroup 
@@ -1350,6 +1350,8 @@ const handleClickOutsideContextMenu = (event: MouseEvent) => {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
   padding: 16px 36px;
 
   border-bottom: 0px solid var(--border-color);
@@ -1372,10 +1374,12 @@ const handleClickOutsideContextMenu = (event: MouseEvent) => {
 .topbar-left {
   display: flex;
   align-items: center;
+  flex-shrink: 0;
 }
 
 .topbar-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 14px;
   align-items: center;
 }

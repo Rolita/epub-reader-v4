@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, watch, computed, onUnmounted } from 'vue'
+import { ref, onMounted, watch, computed, onUnmounted, nextTick } from 'vue'
 import SidebarContainer from '../components/SidebarContainer.vue'
 import Bookshelf from '../components/Bookshelf.vue'
 import SettingsTab from '../components/SettingsTab.vue'
@@ -12,6 +12,7 @@ import EmptyState from '../components/EmptyState.vue'
 import { useLibraryStore } from '../stores/library'
 import { useBookStore } from '../stores/book'
 import { useThemeStore } from '../stores/theme'
+import { useSettingsStore } from '../stores/settings'
 import BookIcon from '../components/icons/BookIcon.vue'
 import BookSVG from '../components/icons/BookSVG.vue'
 import ListIcon from '../components/icons/ListIcon.vue'
@@ -28,6 +29,7 @@ import DownloadIcon from '../components/icons/DownloadIcon.vue'
 import BookmarkIcon from '../components/icons/BookmarkIcon.vue'
 import SaveIcon from '../components/icons/SaveIcon.vue'
 import LayoutGridIcon from '../components/icons/LayoutGridIcon.vue'
+import IllustrationIcon from '../components/icons/IllustrationIcon.vue'
 import { handleRestoreProgress as restoreProgressAction, handleSaveProgress as saveProgressAction } from '../composables/useProgressButtons'
 
 interface Tab {
@@ -44,10 +46,126 @@ interface Tab {
   icon?: 'book' | 'folder' | 'settings' | 'sparkles' | 'reader'
 }
 
+interface Pane {
+  id: string
+  activeTabId: string
+  tabIds: string[]
+}
+
 const store = useLibraryStore()
 const bookStore = useBookStore()
 const themeStore = useThemeStore()
 const tabs = ref<Tab[]>([])
+
+// ===== 分屏布局状态 =====
+const layout = ref<{
+  mode: 'single' | 'split'
+  panes: Pane[]
+}>({
+  mode: 'single',
+  panes: [
+    { id: 'pane-1', activeTabId: '', tabIds: [] },
+    { id: 'pane-2', activeTabId: '', tabIds: [] }
+  ]
+})
+
+// 获取 tab 所在的 pane
+const getPaneByTabId = (tabId: string): Pane | null => {
+  for (const pane of layout.value.panes) {
+    if (pane.tabIds.includes(tabId)) return pane
+  }
+  return null
+}
+
+// 获取 pane 中的 tab 对象
+const getPaneTabs = (pane: Pane): Tab[] => {
+  return pane.tabIds.map(id => tabs.value.find(t => t.id === id)).filter(Boolean) as Tab[]
+}
+
+// 获取当前焦点的 pane（包含 activeTabId 的 pane）
+const getFocusedPane = (): Pane | null => {
+  return getPaneByTabId(activeTabId.value)
+}
+
+// 将 tab 添加到指定 pane
+const addTabToPane = (tabId: string, paneId: string) => {
+  const pane = layout.value.panes.find(p => p.id === paneId)
+  if (!pane) return
+  if (!pane.tabIds.includes(tabId)) {
+    pane.tabIds.push(tabId)
+  }
+  pane.activeTabId = tabId
+}
+
+// 从 pane 中移除 tab
+const removeTabFromPane = (tabId: string) => {
+  const pane = getPaneByTabId(tabId)
+  if (!pane) return
+  const idx = pane.tabIds.indexOf(tabId)
+  if (idx !== -1) {
+    pane.tabIds.splice(idx, 1)
+    // 如果移除的是 activeTab，切换到相邻 tab
+    if (pane.activeTabId === tabId) {
+      const newIdx = idx < pane.tabIds.length ? idx : idx - 1
+      pane.activeTabId = newIdx >= 0 ? pane.tabIds[newIdx] : ''
+    }
+  }
+}
+
+// 移动 tab 到另一个 pane
+const moveTabToPane = (tabId: string, targetPaneId: string) => {
+  removeTabFromPane(tabId)
+  addTabToPane(tabId, targetPaneId)
+  // 如果分屏模式下某个 pane 变空了，自动退出分屏
+  if (layout.value.mode === 'split') {
+    const emptyPane = layout.value.panes.find(p => p.tabIds.length === 0)
+    if (emptyPane) {
+      exitSplitMode()
+    }
+  }
+}
+
+// 切换到分屏模式
+const enterSplitMode = () => {
+  if (layout.value.mode === 'split') return
+  layout.value.mode = 'split'
+  // 将当前 activeTabId 以外的 tabs 保留在 pane-1
+  const currentPane = layout.value.panes[0]
+  currentPane.tabIds = tabs.value.map(t => t.id)
+  currentPane.activeTabId = activeTabId.value
+}
+
+// 退出分屏模式
+const exitSplitMode = () => {
+  if (layout.value.mode === 'single') return
+  layout.value.mode = 'single'
+  // 合并所有 tabs 到 pane-1
+  const allTabIds = new Set<string>()
+  layout.value.panes.forEach(p => p.tabIds.forEach(id => allTabIds.add(id)))
+  layout.value.panes[0].tabIds = Array.from(allTabIds)
+  layout.value.panes[0].activeTabId = activeTabId.value
+  layout.value.panes[1].tabIds = []
+  layout.value.panes[1].activeTabId = ''
+  // 恢复当前激活tab对应的store状态
+  const activeTab = tabs.value.find(t => t.id === activeTabId.value)
+  if (activeTab?.type === 'group-detail' && activeTab.groupId) {
+    store.setActiveGroup(activeTab.groupId)
+  } else if (activeTab?.type === 'bookshelf' && activeTab.shelfId) {
+    store.setActiveShelf(activeTab.shelfId)
+    store.setActiveGroup(null)
+  }
+  // 隐藏右键菜单
+  hideContextMenu()
+}
+
+// 切换分屏/单屏
+const toggleSplitMode = () => {
+  if (layout.value.mode === 'single') {
+    enterSplitMode()
+  } else {
+    exitSplitMode()
+  }
+}
 
 // 根据图标类型返回对应的图标组件
 const getTabIcon = (icon?: string) => {
@@ -93,9 +211,17 @@ watch(activeTabId, (newTabId, oldTabId) => {
   if (newTabId) {
     const newTab = tabs.value.find(t => t.id === newTabId)
     if (newTab?.type === 'reader') {
-      const newReader = readerRefs.get(newTabId)
-      newReader?.updateBookStore()
-      handleRestoreProgress()
+      // 使用 nextTick 确保 ReaderContent 组件已挂载
+      nextTick(() => {
+        const newReader = readerRefs.get(newTabId)
+        newReader?.updateBookStore()
+        handleRestoreProgress()
+        
+        // 如果插图侧边栏正在显示，重新收集当前书籍的插图
+        if (activeSidebar.value === 'illustration') {
+          collectIllustrationsFromReader()
+        }
+      })
     }
   }
 })
@@ -130,6 +256,7 @@ const handleShowAlert = (e: CustomEvent) => {
 // 拖拽相关
 const draggedTabId = ref<string | null>(null)
 const dragOverTabId = ref<string | null>(null)
+const dragOverPaneId = ref<string | null>(null)
 
 // 右键菜单相关
 const contextMenuVisible = ref(false)
@@ -138,8 +265,17 @@ const contextMenuY = ref(0)
 const contextMenuTabId = ref<string | null>(null)
 
 // 处理目录跳转
-const handleJump = (href: string) => {
-  getActiveReader()?.jumpTo(href);
+const handleJump = (payload: { href: string; cfi: string } | string) => {
+  if (typeof payload === 'string') {
+    getActiveReader()?.jumpTo(payload);
+  } else {
+    getActiveReader()?.jumpTo(payload.href, payload.cfi);
+  }
+};
+
+// 处理图片预览
+const handlePreview = (payload: { src: string; alt: string }) => {
+  getActiveReader()?.openImagePreview(payload.src, payload.alt);
 };
 
 // 监听侧边栏选中变化
@@ -152,9 +288,49 @@ watch(() => store.activeShelfId, (newShelfId) => {
   }
 })
 
-const switchSidebar = (viewName: string) => {
+const switchSidebar = async (viewName: string) => {
   activeSidebar.value = viewName
+  
+  if (viewName === 'illustration') {
+    await collectIllustrationsFromReader()
+  }
+  
   sidebarRef.value?.switchView(viewName)
+}
+
+// 从阅读器收集插图
+const collectIllustrationsFromReader = async () => {
+  console.log('[插图收集] activeTabId:', activeTabId.value)
+  console.log('[插图收集] readerRefs 大小:', readerRefs.size)
+  
+  let reader = getActiveReader()
+  
+  if (!reader) {
+    // 尝试从所有阅读器中获取第一个
+    for (const [tabId, ref] of readerRefs) {
+      const tab = tabs.value.find(t => t.id === tabId)
+      if (tab?.type === 'reader') {
+        reader = ref
+        console.log('[插图收集] 从所有阅读器中找到:', tabId)
+        break
+      }
+    }
+  }
+  
+  if (!reader) {
+    console.warn('[插图收集] 没有找到激活的阅读器')
+    return
+  }
+  
+  try {
+    const illustrations = await reader.getIllustrations?.()
+    console.log('[插图收集] 从阅读器获取到', illustrations?.length || 0, '张图片')
+    
+    const settingsStore = useSettingsStore()
+    settingsStore.setIllustrations(illustrations || [])
+  } catch (err) {
+    console.error('[插图收集] 获取插图失败:', err)
+  }
 }
 
 const openWebDav = () => {
@@ -176,9 +352,31 @@ const handleThemeSaved = async (tabId: string) => {
 }
 
 // 刷新当前 tab 页面
-const handleRefresh = () => {
-  if (!activeTabId.value) return
-  tabRefreshKeys.value[activeTabId.value] = (tabRefreshKeys.value[activeTabId.value] || 0) + 1
+const handleRefresh = async () => {
+  await handleSaveProgress()
+  
+  if (layout.value.mode === 'single') {
+    if (!activeTabId.value) return
+    const tab = tabs.value.find(t => t.id === activeTabId.value)
+    if (tab?.type === 'reader') {
+      const reader = readerRefs.get(activeTabId.value)
+      if (reader) reader.refresh()
+    } else {
+      tabRefreshKeys.value[activeTabId.value] = (tabRefreshKeys.value[activeTabId.value] || 0) + 1
+    }
+  } else {
+    layout.value.panes.forEach(pane => {
+      if (pane.activeTabId) {
+        const tab = tabs.value.find(t => t.id === pane.activeTabId)
+        if (tab?.type === 'reader') {
+          const reader = readerRefs.get(pane.activeTabId)
+          if (reader) reader.refresh()
+        } else {
+          tabRefreshKeys.value[pane.activeTabId] = (tabRefreshKeys.value[pane.activeTabId] || 0) + 1
+        }
+      }
+    })
+  }
 }
 
 // 显示气泡提示（来自 WebDAV 侧边栏）
@@ -246,9 +444,37 @@ const handleRestoreProgress = async () => {
   await restoreProgressAction(activeTab.value, getActiveReader() || null, showToast)
 }
 
+// 书籍初始化完成后延时恢复进度
+const handleReaderReady = () => {
+  setTimeout(() => {
+    handleRestoreProgress()
+  }, 500)
+}
+
 // 保存阅读进度
 const handleSaveProgress = async () => {
-  await saveProgressAction(activeTab.value, getActiveReader() || null, showToast)
+  if (layout.value.mode === 'single') {
+    await saveProgressAction(activeTab.value, getActiveReader() || null, showToast)
+  } else {
+    let savedCount = 0
+    for (const pane of layout.value.panes) {
+      if (pane.activeTabId) {
+        const tab = tabs.value.find(t => t.id === pane.activeTabId)
+        const reader = readerRefs.get(pane.activeTabId)
+        if (tab?.type === 'reader' && reader) {
+          try {
+            const result = await reader.saveProgress?.()
+            if (result) savedCount++
+          } catch (e) {
+            console.error('保存进度失败:', e)
+          }
+        }
+      }
+    }
+    if (savedCount > 0) {
+      showToast(`已保存 ${savedCount} 个阅读进度`, 'success')
+    }
+  }
 }
 
 // 显示创建书架提示
@@ -264,6 +490,9 @@ const openBookshelfTab = (shelfId: string, shelfName: string) => {
   if (existingTab) {
     // 如果存在，激活该 tab
     activeTabId.value = existingTab.id
+    // 确保在正确的 pane 中
+    const pane = getPaneByTabId(existingTab.id) || layout.value.panes[0]
+    pane.activeTabId = existingTab.id
   } else {
     // 如果不存在，创建新 tab
     const newTab: Tab = {
@@ -275,6 +504,9 @@ const openBookshelfTab = (shelfId: string, shelfName: string) => {
     }
     tabs.value.push(newTab)
     activeTabId.value = newTab.id
+    // 添加到当前焦点的 pane（单屏时就是 pane-1）
+    const focusedPane = getFocusedPane() || layout.value.panes[0]
+    addTabToPane(newTab.id, focusedPane.id)
   }
   // 切换到书架侧边栏
   switchSidebar('shelf')
@@ -290,6 +522,8 @@ const openSettingsTab = () => {
   
   if (existingTab) {
     activeTabId.value = existingTab.id
+    const pane = getPaneByTabId(existingTab.id) || layout.value.panes[0]
+    pane.activeTabId = existingTab.id
   } else {
     const newTab: Tab = {
       id: 'settings',
@@ -299,6 +533,8 @@ const openSettingsTab = () => {
     }
     tabs.value.push(newTab)
     activeTabId.value = newTab.id
+    const focusedPane = getFocusedPane() || layout.value.panes[0]
+    addTabToPane(newTab.id, focusedPane.id)
   }
 }
 
@@ -307,6 +543,8 @@ const openAddThemeTab = () => {
   
   if (existingTab) {
     activeTabId.value = existingTab.id
+    const pane = getPaneByTabId(existingTab.id) || layout.value.panes[0]
+    pane.activeTabId = existingTab.id
   } else {
     const newTab: Tab = {
       id: 'add-theme',
@@ -316,6 +554,8 @@ const openAddThemeTab = () => {
     }
     tabs.value.push(newTab)
     activeTabId.value = newTab.id
+    const focusedPane = getFocusedPane() || layout.value.panes[0]
+    addTabToPane(newTab.id, focusedPane.id)
   }
   // 切换到主题侧边栏
   switchSidebar('theme')
@@ -327,6 +567,8 @@ const openEditThemeTab = (themeId: string) => {
 
   if (existingTab) {
     activeTabId.value = existingTab.id
+    const pane = getPaneByTabId(existingTab.id) || layout.value.panes[0]
+    pane.activeTabId = existingTab.id
   } else {
     const theme = themeStore.themes.find(t => t.id === themeId)
     const newTab: Tab = {
@@ -338,6 +580,8 @@ const openEditThemeTab = (themeId: string) => {
     }
     tabs.value.push(newTab)
     activeTabId.value = newTab.id
+    const focusedPane = getFocusedPane() || layout.value.panes[0]
+    addTabToPane(newTab.id, focusedPane.id)
   }
   switchSidebar('theme')
 }
@@ -348,6 +592,8 @@ const openBookDetailTab = (book: any) => {
   
   if (existingTab) {
     activeTabId.value = existingTab.id
+    const pane = getPaneByTabId(existingTab.id) || layout.value.panes[0]
+    pane.activeTabId = existingTab.id
   } else {
     const newTab: Tab = {
       id: tabId,
@@ -359,17 +605,21 @@ const openBookDetailTab = (book: any) => {
     }
     tabs.value.push(newTab)
     activeTabId.value = newTab.id
+    const focusedPane = getFocusedPane() || layout.value.panes[0]
+    addTabToPane(newTab.id, focusedPane.id)
   }
   // 切换到书架侧边栏
   switchSidebar('shelf')
 }
 
-const openGroupTab = (group: any) => {
+const openGroupTab = (group: any, paneId?: string) => {
   const tabId = 'group-' + group.id
   const existingTab = tabs.value.find(t => t.id === tabId)
   
   if (existingTab) {
     activeTabId.value = existingTab.id
+    const pane = getPaneByTabId(existingTab.id) || layout.value.panes[0]
+    pane.activeTabId = existingTab.id
   } else {
     const newTab: Tab = {
       id: tabId,
@@ -381,16 +631,21 @@ const openGroupTab = (group: any) => {
     }
     tabs.value.push(newTab)
     activeTabId.value = newTab.id
+    const targetPaneId = paneId || getFocusedPane()?.id || layout.value.panes[0].id
+    addTabToPane(newTab.id, targetPaneId)
   }
   // 激活当前分组
   store.setActiveGroup(group.id)
 }
 
-const openReaderTab = async (book: any) => {
+const openReaderTab = async (book: any, targetPaneId?: string) => {
   const existingTab = tabs.value.find(t => t.type === 'reader' && t.bookId === book.id)
   
   if (existingTab) {
     activeTabId.value = existingTab.id
+    const pane = getPaneByTabId(existingTab.id) || layout.value.panes[0]
+    pane.activeTabId = existingTab.id
+ 
   } else {
     let filePath = book.filePath
     
@@ -411,6 +666,11 @@ const openReaderTab = async (book: any) => {
     }
     tabs.value.push(newTab)
     activeTabId.value = newTab.id
+    // 如果指定了 targetPaneId，使用该 pane；否则使用当前焦点 pane
+    const paneId = targetPaneId || getFocusedPane()?.id || layout.value.panes[0].id
+    addTabToPane(newTab.id, paneId)
+    
+ 
   }
   
   // 自动切换到目录侧边栏
@@ -429,6 +689,9 @@ const closeTab = async (tabId: string) => {
     }
     tabs.value.splice(index, 1)
     
+    // 从 pane 中移除
+    removeTabFromPane(tabId)
+    
     // 清理阅读器组件引用
     if (closingTab.type === 'reader') {
       readerRefs.delete(tabId)
@@ -446,40 +709,77 @@ const closeTab = async (tabId: string) => {
     
     // 如果关闭的是当前激活的 tab
     if (isActive) {
-      // 选择相邻的 tab
-      const newIndex = index < tabs.value.length ? index : index - 1
-      if (newIndex >= 0 && tabs.value[newIndex]) {
-        activeTabId.value = tabs.value[newIndex].id
-        const newTab = tabs.value[newIndex]
-        if (newTab.type === 'bookshelf' && newTab.shelfId) {
-          store.setActiveShelf(newTab.shelfId)
-          // 清空激活的分组
-          store.setActiveGroup(null)
-          // 自动切换到书架侧边栏
-          switchSidebar('shelf')
-        } else if (newTab.type === 'group-detail' && newTab.groupId) {
-          store.setActiveGroup(newTab.groupId)
+      // 从当前 pane 中选择相邻的 tab
+      const focusedPane = getFocusedPane()
+      if (focusedPane && focusedPane.activeTabId) {
+        activeTabId.value = focusedPane.activeTabId
+        const newTab = tabs.value.find(t => t.id === focusedPane.activeTabId)
+        if (newTab) {
+          if (newTab.type === 'bookshelf' && newTab.shelfId) {
+            store.setActiveShelf(newTab.shelfId)
+            store.setActiveGroup(null)
+            switchSidebar('shelf')
+          } else if (newTab.type === 'group-detail' && newTab.groupId) {
+            store.setActiveGroup(newTab.groupId)
+          }
         }
       } else {
-        activeTabId.value = ''
-        store.setActiveGroup(null)
+        // 如果当前 pane 没有 tab 了，尝试从另一个 pane 找
+        const otherPane = layout.value.panes.find(p => p.id !== focusedPane?.id && p.activeTabId)
+        if (otherPane) {
+          activeTabId.value = otherPane.activeTabId
+          const newTab = tabs.value.find(t => t.id === otherPane.activeTabId)
+          if (newTab) {
+            if (newTab.type === 'bookshelf' && newTab.shelfId) {
+              store.setActiveShelf(newTab.shelfId)
+              store.setActiveGroup(null)
+              switchSidebar('shelf')
+            } else if (newTab.type === 'group-detail' && newTab.groupId) {
+              store.setActiveGroup(newTab.groupId)
+            }
+          }
+        } else {
+          activeTabId.value = ''
+          store.setActiveGroup(null)
+        }
+      }
+    }
+    
+    // 如果分屏模式下某个 pane 空了，退出分屏
+    if (layout.value.mode === 'split') {
+      const emptyPane = layout.value.panes.find(p => p.tabIds.length === 0)
+      if (emptyPane) {
+        exitSplitMode()
       }
     }
   }
 }
 
-const switchTab = (tabId: string) => {
+const switchTab = (tabId: string, paneId?: string) => {
   // 获取当前激活的tab（切换前）
   const currentTab = tabs.value.find(t => t.id === activeTabId.value)
   // 获取目标tab
   const targetTab = tabs.value.find(t => t.id === tabId)
   
-  // 如果点击的是当前已激活的tab，不切换侧边栏
+  // 如果点击的是当前已激活的tab，只更新 pane 的 activeTabId
   if (activeTabId.value === tabId) {
+    if (paneId) {
+      const pane = layout.value.panes.find(p => p.id === paneId)
+      if (pane) pane.activeTabId = tabId
+    }
     return
   }
   
   activeTabId.value = tabId
+  
+  // 更新 pane 的 activeTabId
+  if (paneId) {
+    const pane = layout.value.panes.find(p => p.id === paneId)
+    if (pane) pane.activeTabId = tabId
+  } else {
+    const pane = getPaneByTabId(tabId)
+    if (pane) pane.activeTabId = tabId
+  }
   
   if (targetTab) {
     if (targetTab.type === 'bookshelf' && targetTab.shelfId) {
@@ -515,7 +815,26 @@ const switchTab = (tabId: string) => {
   }
 }
 
+const handlePaneClick = (paneId: string) => {
+  const pane = layout.value.panes.find(p => p.id === paneId)
+  if (!pane || !pane.activeTabId) return
+  
+  const tab = tabs.value.find(t => t.id === pane.activeTabId)
+  if (tab && tab.type !== 'reader') {
+    switchTab(tab.id, paneId)
+  }
+}
+
 // ========== 快捷键功能 ==========
+
+// 处理窗口大小改变
+let resizeTimer: ReturnType<typeof setTimeout> | null = null
+const handleResize = () => {
+  if (resizeTimer) clearTimeout(resizeTimer)
+  resizeTimer = setTimeout(() => {
+    handleRefresh()
+  }, 300)
+}
 
 // 处理键盘事件
 const handleKeyDown = async (e: KeyboardEvent) => {
@@ -533,11 +852,13 @@ const handleKeyDown = async (e: KeyboardEvent) => {
 onMounted(() => {
   window.addEventListener('keydown', handleKeyDown)
   window.addEventListener('show-alert', handleShowAlert as EventListener)
+  window.addEventListener('resize', handleResize)
 })
 
 onUnmounted(() => {
   window.removeEventListener('keydown', handleKeyDown)
   window.removeEventListener('show-alert', handleShowAlert as EventListener)
+  window.removeEventListener('resize', handleResize)
 })
 
 const activeTab = computed(() => {
@@ -563,25 +884,62 @@ const handleDragLeave = () => {
 }
 
 // 放置
-const handleDrop = (e: DragEvent, targetTabId: string) => {
+const handleDrop = (e: DragEvent, targetTabId: string, paneId?: string) => {
   e.preventDefault()
+  e.stopPropagation()
   if (draggedTabId.value && draggedTabId.value !== targetTabId) {
-    const draggedIndex = tabs.value.findIndex(t => t.id === draggedTabId.value)
-    const targetIndex = tabs.value.findIndex(t => t.id === targetTabId)
-    
-    if (draggedIndex !== -1 && targetIndex !== -1) {
-      const [draggedTab] = tabs.value.splice(draggedIndex, 1)
-      tabs.value.splice(targetIndex, 0, draggedTab)
+    const draggedPane = getPaneByTabId(draggedTabId.value)
+    const targetPane = getPaneByTabId(targetTabId)
+
+    if (draggedPane && targetPane && draggedPane.id === targetPane.id) {
+      // 同一个 pane 内拖拽：调整 pane.tabIds 顺序
+      const draggedIdx = draggedPane.tabIds.indexOf(draggedTabId.value)
+      const targetIdx = targetPane.tabIds.indexOf(targetTabId)
+      if (draggedIdx !== -1 && targetIdx !== -1) {
+        const [id] = draggedPane.tabIds.splice(draggedIdx, 1)
+        draggedPane.tabIds.splice(targetIdx, 0, id)
+      }
+    } else if (draggedPane && targetPane) {
+      // 跨 pane 拖拽：移动 tab 到目标 pane
+      moveTabToPane(draggedTabId.value, targetPane.id)
     }
   }
   draggedTabId.value = null
   dragOverTabId.value = null
+  dragOverPaneId.value = null
+}
+
+// 拖拽经过 pane 容器
+const handlePaneDragOver = (e: DragEvent, paneId: string) => {
+  e.preventDefault()
+  dragOverPaneId.value = paneId
+}
+
+// 拖拽离开 pane 容器
+const handlePaneDragLeave = () => {
+  dragOverPaneId.value = null
+}
+
+// 放置到 pane 容器
+const handlePaneDrop = (e: DragEvent, paneId: string) => {
+  e.preventDefault()
+  if (draggedTabId.value) {
+    const draggedPane = getPaneByTabId(draggedTabId.value)
+    if (draggedPane && draggedPane.id !== paneId) {
+      // 跨 pane 拖拽：移动 tab 到目标 pane
+      moveTabToPane(draggedTabId.value, paneId)
+    }
+  }
+  draggedTabId.value = null
+  dragOverTabId.value = null
+  dragOverPaneId.value = null
 }
 
 // 拖拽结束
 const handleDragEnd = () => {
   draggedTabId.value = null
   dragOverTabId.value = null
+  dragOverPaneId.value = null
 }
 
 // 右键菜单函数
@@ -608,16 +966,34 @@ const handleCloseTabWithContext = async () => {
 const handleCloseOtherTabsWithContext = () => {
   if (!contextMenuTabId.value) return
   
-  const currentTab = tabs.value.find(t => t.id === contextMenuTabId.value)
-  if (currentTab) {
-    tabs.value = [currentTab]
-    activeTabId.value = currentTab.id
-    
-    // 如果是书架标签，切换到书架侧边栏
-    if (currentTab.type === 'bookshelf' && currentTab.shelfId) {
-      store.setActiveShelf(currentTab.shelfId)
-      switchSidebar('shelf')
+  const currentPane = getPaneByTabId(contextMenuTabId.value)
+  if (!currentPane) return
+  
+  // 只关闭当前 pane 中的其他 tabs
+  const tabsToClose = currentPane.tabIds.filter(id => id !== contextMenuTabId.value)
+  tabsToClose.forEach(id => {
+    const tab = tabs.value.find(t => t.id === id)
+    if (tab) {
+      if (tab.type === 'reader') {
+        readerRefs.delete(id)
+        bookStore.clearActiveBook()
+      }
+      if (tab.type === 'group-detail') {
+        store.setActiveGroup(null)
+      }
     }
+    const globalIdx = tabs.value.findIndex(t => t.id === id)
+    if (globalIdx !== -1) tabs.value.splice(globalIdx, 1)
+  })
+  
+  currentPane.tabIds = [contextMenuTabId.value]
+  currentPane.activeTabId = contextMenuTabId.value
+  activeTabId.value = contextMenuTabId.value
+  
+  const currentTab = tabs.value.find(t => t.id === contextMenuTabId.value)
+  if (currentTab?.type === 'bookshelf' && currentTab.shelfId) {
+    store.setActiveShelf(currentTab.shelfId)
+    switchSidebar('shelf')
   }
   hideContextMenu()
 }
@@ -625,27 +1001,60 @@ const handleCloseOtherTabsWithContext = () => {
 const handleCloseRightTabsWithContext = () => {
   if (!contextMenuTabId.value) return
   
-  const currentIndex = tabs.value.findIndex(t => t.id === contextMenuTabId.value)
-  if (currentIndex !== -1 && currentIndex < tabs.value.length - 1) {
-    const closingTabs = tabs.value.slice(currentIndex + 1)
+  const currentPane = getPaneByTabId(contextMenuTabId.value)
+  if (!currentPane) return
+  
+  const currentIndex = currentPane.tabIds.indexOf(contextMenuTabId.value)
+  if (currentIndex !== -1 && currentIndex < currentPane.tabIds.length - 1) {
+    const closingIds = currentPane.tabIds.slice(currentIndex + 1)
     
-    // 检查是否要关闭阅读器或分组标签
-    closingTabs.forEach(tab => {
-      if (tab.type === 'reader') {
-        bookStore.clearActiveBook()
+    closingIds.forEach(id => {
+      const tab = tabs.value.find(t => t.id === id)
+      if (tab) {
+        if (tab.type === 'reader') {
+          readerRefs.delete(id)
+          bookStore.clearActiveBook()
+        }
+        if (tab.type === 'group-detail') {
+          store.setActiveGroup(null)
+        }
       }
-      if (tab.type === 'group-detail') {
-        store.setActiveGroup(null)
-      }
+      const globalIdx = tabs.value.findIndex(t => t.id === id)
+      if (globalIdx !== -1) tabs.value.splice(globalIdx, 1)
     })
     
-    tabs.value = tabs.value.slice(0, currentIndex + 1)
+    currentPane.tabIds = currentPane.tabIds.slice(0, currentIndex + 1)
     
-    // 如果关闭的包含当前激活的tab，切换到当前tab
-    if (closingTabs.some(t => t.id === activeTabId.value)) {
+    if (closingIds.some(id => id === activeTabId.value)) {
       activeTabId.value = contextMenuTabId.value
+      currentPane.activeTabId = contextMenuTabId.value
     }
   }
+  hideContextMenu()
+}
+
+// 在分屏中打开
+const handleOpenInSplit = () => {
+  if (!contextMenuTabId.value) return
+  
+  const tabId = contextMenuTabId.value
+  const currentPane = getPaneByTabId(tabId)
+  if (!currentPane) return
+  
+  // 如果当前是单屏，先进入分屏模式
+  if (layout.value.mode === 'single') {
+    enterSplitMode()
+  }
+  
+  // 找到另一个 pane
+  const otherPane = layout.value.panes.find(p => p.id !== currentPane.id)
+  if (!otherPane) return
+  
+  // 移动 tab 到另一个 pane
+  moveTabToPane(tabId, otherPane.id)
+  activeTabId.value = tabId
+  otherPane.activeTabId = tabId
+  
   hideContextMenu()
 }
 
@@ -669,6 +1078,11 @@ const toggleMaximize = () => {
   const w = window as any
   if (w.runtime && w.runtime.WindowToggleMaximise) {
     w.runtime.WindowToggleMaximise()
+  }
+  if (layout.value.mode === 'split') {
+    setTimeout(() => {
+      handleRefresh()
+    }, 300)
   }
 }
 
@@ -734,6 +1148,12 @@ onUnmounted(() => {
         ><LayoutGridIcon :size="22" /></button>
         <button 
           class="func-btn" 
+          :class="{ active: activeSidebar === 'illustration' }"
+          @click="switchSidebar('illustration')" 
+          title="插画"
+        ><IllustrationIcon :size="22" /></button>
+        <button 
+          class="func-btn" 
           @click="handleRefresh" 
           title="刷新"
         ><RefreshIcon :size="22" /></button>
@@ -762,38 +1182,113 @@ onUnmounted(() => {
     </aside>
     
     <!-- 侧边栏容器 -->
-    <SidebarContainer ref="sidebarRef" @jump="handleJump" @open-shelf="handleOpenShelf" @add-theme="openAddThemeTab" @edit-theme="openEditThemeTab" @sync-complete="handleRefresh" @show-toast="handleShowToast" />
+    <SidebarContainer ref="sidebarRef" @jump="handleJump" @preview="handlePreview" @open-shelf="handleOpenShelf" @add-theme="openAddThemeTab" @edit-theme="openEditThemeTab" @sync-complete="handleRefresh" @show-toast="handleShowToast" />
     
     <!-- 主内容区 -->
     <main class="main-content">
       <!-- 顶部栏（包含 tabs 和窗口控制） -->
       <header class="top-header" @dblclick.self="toggleMaximize">
-        <!-- Tabs 容器 -->
-        <div v-if="tabs.length > 0" class="tabs-container" @dblclick.self="toggleMaximize">
-          <div 
-            v-for="tab in tabs" 
-            :key="tab.id"
-            :class="['tab-item', { active: activeTabId === tab.id, dragging: draggedTabId === tab.id, 'drag-over': dragOverTabId === tab.id }]"
-            :title="tab.name"
-            @click="switchTab(tab.id)"
-            @dblclick="closeTab(tab.id)"
-            @contextmenu="(e) => showContextMenu(e, tab.id)"
-            draggable="true"
-            @dragstart="handleDragStart(tab.id)"
-            @dragover="(e) => handleDragOver(e, tab.id)"
-            @dragleave="handleDragLeave"
-            @drop="(e) => handleDrop(e, tab.id)"
-            @dragend="handleDragEnd"
-          >
-            <component 
-              :is="getTabIcon(tab.icon)" 
-              :size="14" 
-              class="tab-icon"
-            />
-            <span class="tab-name">{{ tab.name }}</span>
-            <button class="tab-close" @click.stop="closeTab(tab.id)"><XIcon :size="14" /></button>
+        <!-- 单屏模式：一个 Tabs 容器 -->
+        <template v-if="layout.mode === 'single'">
+          <div v-if="layout.panes[0].tabIds.length > 0" class="tabs-container" @dblclick.self="toggleMaximize">
+            <div 
+              v-for="tabId in layout.panes[0].tabIds" 
+              :key="tabId"
+              :class="['tab-item', { active: activeTabId === tabId, dragging: draggedTabId === tabId, 'drag-over': dragOverTabId === tabId }]"
+              :title="tabs.find(t => t.id === tabId)?.name"
+              @click="switchTab(tabId)"
+              @dblclick="closeTab(tabId)"
+              @contextmenu="(e) => showContextMenu(e, tabId)"
+              draggable="true"
+              @dragstart="handleDragStart(tabId)"
+              @dragover="(e) => handleDragOver(e, tabId)"
+              @dragleave="handleDragLeave"
+              @drop="(e) => handleDrop(e, tabId)"
+              @dragend="handleDragEnd"
+            >
+              <component 
+                :is="getTabIcon(tabs.find(t => t.id === tabId)?.icon)" 
+                :size="14" 
+                class="tab-icon"
+              />
+              <span class="tab-name">{{ tabs.find(t => t.id === tabId)?.name }}</span>
+              <button class="tab-close" @click.stop="closeTab(tabId)"><XIcon :size="14" /></button>
+            </div>
           </div>
-        </div>
+        </template>
+        
+        <!-- 分屏模式：两个 Tabs 容器 -->
+        <template v-else>
+          <div class="tabs-split-container">
+            <!-- 左 Pane tabs -->
+            <div
+              class="tabs-container pane-tabs left-tabs"
+              :class="{ 'drag-over-pane': dragOverPaneId === 'pane-1' }"
+              @dragover="(e) => handlePaneDragOver(e, 'pane-1')"
+              @dragleave="handlePaneDragLeave"
+              @drop="(e) => handlePaneDrop(e, 'pane-1')"
+              @dblclick.self="toggleMaximize"
+            >
+              <div
+                v-for="tabId in layout.panes[0].tabIds"
+                :key="tabId"
+                :class="['tab-item', { active: activeTabId === tabId, dragging: draggedTabId === tabId, 'drag-over': dragOverTabId === tabId }]"
+                :title="tabs.find(t => t.id === tabId)?.name"
+                @click="switchTab(tabId, 'pane-1')"
+                @dblclick="closeTab(tabId)"
+                @contextmenu="(e) => showContextMenu(e, tabId)"
+                draggable="true"
+                @dragstart="handleDragStart(tabId)"
+                @dragover="(e) => handleDragOver(e, tabId)"
+                @dragleave="handleDragLeave"
+                @drop="(e) => handleDrop(e, tabId, 'pane-1')"
+                @dragend="handleDragEnd"
+              >
+                <component
+                  :is="getTabIcon(tabs.find(t => t.id === tabId)?.icon)"
+                  :size="14"
+                  class="tab-icon"
+                />
+                <span class="tab-name">{{ tabs.find(t => t.id === tabId)?.name }}</span>
+                <button class="tab-close" @click.stop="closeTab(tabId)"><XIcon :size="14" /></button>
+              </div>
+            </div>
+
+            <!-- 右 Pane tabs -->
+            <div
+              class="tabs-container pane-tabs right-tabs"
+              :class="{ 'drag-over-pane': dragOverPaneId === 'pane-2' }"
+              @dragover="(e) => handlePaneDragOver(e, 'pane-2')"
+              @dragleave="handlePaneDragLeave"
+              @drop="(e) => handlePaneDrop(e, 'pane-2')"
+              @dblclick.self="toggleMaximize"
+            >
+              <div
+                v-for="tabId in layout.panes[1].tabIds"
+                :key="tabId"
+                :class="['tab-item', { active: activeTabId === tabId, dragging: draggedTabId === tabId, 'drag-over': dragOverTabId === tabId }]"
+                :title="tabs.find(t => t.id === tabId)?.name"
+                @click="switchTab(tabId, 'pane-2')"
+                @dblclick="closeTab(tabId)"
+                @contextmenu="(e) => showContextMenu(e, tabId)"
+                draggable="true"
+                @dragstart="handleDragStart(tabId)"
+                @dragover="(e) => handleDragOver(e, tabId)"
+                @dragleave="handleDragLeave"
+                @drop="(e) => handleDrop(e, tabId, 'pane-2')"
+                @dragend="handleDragEnd"
+              >
+                <component
+                  :is="getTabIcon(tabs.find(t => t.id === tabId)?.icon)"
+                  :size="14"
+                  class="tab-icon"
+                />
+                <span class="tab-name">{{ tabs.find(t => t.id === tabId)?.name }}</span>
+                <button class="tab-close" @click.stop="closeTab(tabId)"><XIcon :size="14" /></button>
+              </div>
+            </div>
+          </div>
+        </template>
         
         <!-- 窗口控制按钮（独立容器，始终固定在右侧） -->
         <div class="window-controls">
@@ -818,69 +1313,211 @@ onUnmounted(() => {
           <button class="context-menu-item" @click="handleCloseTabWithContext">关闭</button>
           <button class="context-menu-item" @click="handleCloseOtherTabsWithContext">关闭其他标签页</button>
           <button class="context-menu-item" @click="handleCloseRightTabsWithContext">关闭右侧标签页</button>
+          <button v-if="layout.mode !== 'split'" class="context-menu-item" @click="handleOpenInSplit">在分屏中打开</button>
+          <button v-if="layout.mode === 'split'" class="context-menu-item" @click="exitSplitMode">退出分屏</button>
         </div>
       </header>
       
       <!-- 内容区域 -->
-      <div v-if="activeTab" class="content-container">
-        <!-- 书架内容 -->
-        <Bookshelf 
-          v-if="activeTab.type === 'bookshelf' && activeTab.shelfId"
-          :shelf-id="activeTab.shelfId" 
-          :key="'bookshelf-' + activeTab.id + '-' + (tabRefreshKeys[activeTab.id] || 0)"
-          @open-book="openReaderTab"
-          @toggle-webdav="toggleWebDav"
-          @open-book-detail="openBookDetailTab"
-          @open-group="openGroupTab"
-          @close-tab-menu="hideContextMenu"
-        />
-        
-        <!-- 分组详情内容 -->
-        <GroupDetail 
-          v-else-if="activeTab.type === 'group-detail' && activeTab.groupId"
-          :key="'group-' + activeTab.id + '-' + (tabRefreshKeys[activeTab.id] || 0)"
-          @open-book="openReaderTab"
-          @toggle-webdav="toggleWebDav"
-          @open-book-detail="openBookDetailTab"
-          @close-tab-menu="hideContextMenu"
-        />
-        
-        <!-- 设置内容 -->
-        <SettingsTab 
-          v-else-if="activeTab.type === 'settings'"
-          :key="'settings-' + activeTab.id + '-' + (tabRefreshKeys[activeTab.id] || 0)"
-        />
-        
-        <!-- 添加/编辑主题内容 -->
-        <AddThemeTab 
-          v-else-if="activeTab.type === 'add-theme'"
-          :key="'add-theme-' + (activeTab.editThemeId || '') + '-' + (tabRefreshKeys[activeTab.id] || 0)"
-          :edit-theme-id="activeTab.editThemeId"
-          @saved="handleThemeSaved(activeTab.id)"
-        />
-        
-        <!-- 书籍详情内容 -->
-        <BookDetailTab
-          v-else-if="activeTab.type === 'book-detail' && activeTab.bookData"
-          :book="activeTab.bookData"
-          :key="'book-detail-' + activeTab.id + '-' + (tabRefreshKeys[activeTab.id] || 0)"
-        />
-        
-        <!-- 阅读器内容 - 使用独立容器，v-show 保持组件存活 -->
-        <div v-show="activeTab?.type === 'reader'" class="reader-container">
-          <template v-for="tab in tabs" :key="'reader-container-' + tab.id">
-            <ReaderContent 
-              v-if="tab.type === 'reader' && tab.filePath"
-              v-show="activeTabId === tab.id"
-              :file-path="tab.filePath"
-              :ref="(el: any) => { 
-                if (el) readerRefs.set(tab.id, el)
-                else readerRefs.delete(tab.id)
-              }"
-            />
-          </template>
+      <template v-if="layout.mode === 'single'">
+        <div v-if="activeTab" class="content-container">
+          <!-- 书架内容 -->
+          <Bookshelf 
+            v-if="activeTab.type === 'bookshelf' && activeTab.shelfId"
+            :shelf-id="activeTab.shelfId" 
+            :key="'bookshelf-' + activeTab.id + '-' + (tabRefreshKeys[activeTab.id] || 0)"
+            @open-book="openReaderTab"
+            @toggle-webdav="toggleWebDav"
+            @open-book-detail="openBookDetailTab"
+            @open-group="openGroupTab"
+            @close-tab-menu="hideContextMenu"
+          />
+          
+          <!-- 分组详情内容 -->
+          <GroupDetail 
+            v-else-if="activeTab.type === 'group-detail' && activeTab.groupId"
+            :key="'group-' + activeTab.id + '-' + (tabRefreshKeys[activeTab.id] || 0)"
+            :group-id="activeTab.groupId"
+            @open-book="openReaderTab"
+            @toggle-webdav="toggleWebDav"
+            @open-book-detail="openBookDetailTab"
+            @close-tab-menu="hideContextMenu"
+          />
+          
+          <!-- 设置内容 -->
+          <SettingsTab 
+            v-else-if="activeTab.type === 'settings'"
+            :key="'settings-' + activeTab.id + '-' + (tabRefreshKeys[activeTab.id] || 0)"
+          />
+          
+          <!-- 添加/编辑主题内容 -->
+          <AddThemeTab 
+            v-else-if="activeTab.type === 'add-theme'"
+            :key="'add-theme-' + (activeTab.editThemeId || '') + '-' + (tabRefreshKeys[activeTab.id] || 0)"
+            :edit-theme-id="activeTab.editThemeId"
+            @saved="handleThemeSaved(activeTab.id)"
+          />
+          
+          <!-- 书籍详情内容 -->
+          <BookDetailTab
+            v-else-if="activeTab.type === 'book-detail' && activeTab.bookData"
+            :book="activeTab.bookData"
+            :key="'book-detail-' + activeTab.id + '-' + (tabRefreshKeys[activeTab.id] || 0)"
+          />
+          
+          <!-- 阅读器内容 - 使用独立容器，v-show 保持组件存活 -->
+          <div v-show="activeTab?.type === 'reader'" class="reader-container">
+            <template v-for="tab in tabs" :key="'reader-container-' + tab.id">
+              <ReaderContent 
+                v-if="tab.type === 'reader' && tab.filePath"
+                v-show="activeTabId === tab.id"
+                :file-path="tab.filePath"
+                :tab-id="tab.id"
+                :ref="(el: any) => { 
+                  if (el) readerRefs.set(tab.id, el)
+                  else readerRefs.delete(tab.id)
+                }"
+                @ready="handleReaderReady"
+              />
+            </template>
+          </div>
         </div>
-      </div>
+      </template>
+      <template v-else>
+        <div class="split-content-container">
+          <!-- 左 Pane -->
+          <div class="split-pane">
+            <div 
+              v-if="tabs.find(t => t.id === layout.panes[0].activeTabId)" 
+              class="content-container"
+              @click="handlePaneClick('pane-1')"
+            >
+              <template v-for="pane in [layout.panes[0]]" :key="pane.id">
+                <Bookshelf 
+                  v-if="tabs.find(t => t.id === pane.activeTabId)?.type === 'bookshelf'"
+                  :shelf-id="tabs.find(t => t.id === pane.activeTabId)?.shelfId" 
+                  :key="'bookshelf-' + pane.activeTabId + '-' + (tabRefreshKeys[pane.activeTabId] || 0)"
+                  @open-book="(book: any) => openReaderTab(book, 'pane-1')"
+                  @toggle-webdav="toggleWebDav"
+                  @open-book-detail="openBookDetailTab"
+                  @open-group="(group: any) => openGroupTab(group, 'pane-1')"
+                  @close-tab-menu="hideContextMenu"
+                />
+                <GroupDetail 
+                  v-else-if="tabs.find(t => t.id === pane.activeTabId)?.type === 'group-detail'"
+                  :key="'group-' + pane.activeTabId + '-' + (tabRefreshKeys[pane.activeTabId] || 0)"
+                  :group-id="tabs.find(t => t.id === pane.activeTabId)?.groupId"
+                  @open-book="(book: any) => openReaderTab(book, 'pane-1')"
+                  @toggle-webdav="toggleWebDav"
+                  @open-book-detail="openBookDetailTab"
+                  @close-tab-menu="hideContextMenu"
+                />
+                <SettingsTab 
+                  v-else-if="tabs.find(t => t.id === pane.activeTabId)?.type === 'settings'"
+                  :key="'settings-' + pane.activeTabId + '-' + (tabRefreshKeys[pane.activeTabId] || 0)"
+                />
+                <AddThemeTab 
+                  v-else-if="tabs.find(t => t.id === pane.activeTabId)?.type === 'add-theme'"
+                  :key="'add-theme-' + (tabs.find(t => t.id === pane.activeTabId)?.editThemeId || '') + '-' + (tabRefreshKeys[pane.activeTabId] || 0)"
+                  :edit-theme-id="tabs.find(t => t.id === pane.activeTabId)?.editThemeId"
+                  @saved="handleThemeSaved(pane.activeTabId)"
+                />
+                <BookDetailTab
+                  v-else-if="tabs.find(t => t.id === pane.activeTabId)?.type === 'book-detail'"
+                  :book="tabs.find(t => t.id === pane.activeTabId)?.bookData"
+                  :key="'book-detail-' + pane.activeTabId + '-' + (tabRefreshKeys[pane.activeTabId] || 0)"
+                />
+                <div v-show="tabs.find(t => t.id === pane.activeTabId)?.type === 'reader'" class="reader-container">
+                  <template v-for="tab in tabs.filter(t => t.type === 'reader' && pane.tabIds.includes(t.id))" :key="'reader-' + pane.id + '-' + tab.id">
+                    <ReaderContent 
+                      v-if="tab.filePath"
+                      v-show="pane.activeTabId === tab.id"
+                      :file-path="tab.filePath"
+                      :tab-id="tab.id"
+                      :is-split-mode="true"
+                      :is-active="tab.id === activeTabId"
+                      @click="switchTab(tab.id, pane.id)"
+                      @scroll="switchTab(tab.id, pane.id)"
+                      @ready="handleReaderReady"
+                      :ref="(el: any) => { 
+                        if (el) readerRefs.set(tab.id, el)
+                        else readerRefs.delete(tab.id)
+                      }"
+                    />
+                  </template>
+                </div>
+              </template>
+            </div>
+          </div>
+          
+          <div class="split-divider"></div>
+          
+          <!-- 右 Pane -->
+          <div class="split-pane">
+            <div 
+              v-if="tabs.find(t => t.id === layout.panes[1].activeTabId)" 
+              class="content-container"
+              @click="handlePaneClick('pane-2')"
+            >
+              <template v-for="pane in [layout.panes[1]]" :key="pane.id">
+                <Bookshelf 
+                  v-if="tabs.find(t => t.id === pane.activeTabId)?.type === 'bookshelf'"
+                  :shelf-id="tabs.find(t => t.id === pane.activeTabId)?.shelfId" 
+                  :key="'bookshelf-' + pane.activeTabId + '-' + (tabRefreshKeys[pane.activeTabId] || 0)"
+                  @open-book="(book: any) => openReaderTab(book, 'pane-2')"
+                  @toggle-webdav="toggleWebDav"
+                  @open-book-detail="openBookDetailTab"
+                  @open-group="(group: any) => openGroupTab(group, 'pane-2')"
+                  @close-tab-menu="hideContextMenu"
+                />
+                <GroupDetail 
+                  v-else-if="tabs.find(t => t.id === pane.activeTabId)?.type === 'group-detail'"
+                  :key="'group-' + pane.activeTabId + '-' + (tabRefreshKeys[pane.activeTabId] || 0)"
+                  :group-id="tabs.find(t => t.id === pane.activeTabId)?.groupId"
+                  @open-book="(book: any) => openReaderTab(book, 'pane-2')"
+                  @toggle-webdav="toggleWebDav"
+                  @open-book-detail="openBookDetailTab"
+                  @close-tab-menu="hideContextMenu"
+                />
+                <SettingsTab 
+                  v-else-if="tabs.find(t => t.id === pane.activeTabId)?.type === 'settings'"
+                  :key="'settings-' + pane.activeTabId + '-' + (tabRefreshKeys[pane.activeTabId] || 0)"
+                />
+                <AddThemeTab 
+                  v-else-if="tabs.find(t => t.id === pane.activeTabId)?.type === 'add-theme'"
+                  :key="'add-theme-' + (tabs.find(t => t.id === pane.activeTabId)?.editThemeId || '') + '-' + (tabRefreshKeys[pane.activeTabId] || 0)"
+                  :edit-theme-id="tabs.find(t => t.id === pane.activeTabId)?.editThemeId"
+                  @saved="handleThemeSaved(pane.activeTabId)"
+                />
+                <BookDetailTab
+                  v-else-if="tabs.find(t => t.id === pane.activeTabId)?.type === 'book-detail'"
+                  :book="tabs.find(t => t.id === pane.activeTabId)?.bookData"
+                  :key="'book-detail-' + pane.activeTabId + '-' + (tabRefreshKeys[pane.activeTabId] || 0)"
+                />
+                <div v-show="tabs.find(t => t.id === pane.activeTabId)?.type === 'reader'" class="reader-container">
+                  <template v-for="tab in tabs.filter(t => t.type === 'reader' && pane.tabIds.includes(t.id))" :key="'reader-' + pane.id + '-' + tab.id">
+                    <ReaderContent 
+                      v-if="tab.filePath"
+                      v-show="pane.activeTabId === tab.id"
+                      :file-path="tab.filePath"
+                      :tab-id="tab.id"
+                      :is-split-mode="true"
+                      :is-active="tab.id === activeTabId"
+                      @click="switchTab(tab.id, pane.id)"
+                      @scroll="switchTab(tab.id, pane.id)"
+                      @ready="handleReaderReady"
+                      :ref="(el: any) => { 
+                        if (el) readerRefs.set(tab.id, el)
+                        else readerRefs.delete(tab.id)
+                      }"
+                    />
+                  </template>
+                </div>
+              </template>
+            </div>
+          </div>
+        </div>
+      </template>
       
       <!-- 下载状态气泡提示 -->
       <div 
@@ -1271,6 +1908,61 @@ onUnmounted(() => {
 .context-menu-item:hover {
   background: var(--primary-light);
   color: var(--primary-color);
+}
+
+/* ===== 分屏布局样式 ===== */
+
+/* 分屏内容容器 */
+.split-content-container {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
+/* 分屏 pane */
+.split-pane {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
+}
+
+/* 分屏内容分隔线 */
+.split-divider {
+  width: 1px;
+  background: var(--border-color);
+  flex-shrink: 0;
+}
+
+/* Tab bar 分屏容器 */
+.tabs-split-container {
+  flex: 1;
+  display: flex;
+  align-items: stretch;
+  overflow: hidden;
+}
+
+/* 分屏时的 tabs 容器 */
+.pane-tabs {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+  align-items: center;
+  min-width: 0; /* 允许收缩，使文本截断生效 */
+  transition: background-color 0.2s ease;
+}
+
+.pane-tabs.drag-over-pane {
+  background-color: var(--primary-light);
+  border-radius: var(--radius-md);
+}
+
+/* 右侧 tabs 容器 - 添加左侧分隔线（贯穿整个 tab 栏高度） */
+.right-tabs {
+  border-left: 1px solid var(--border-color);
+  padding-left: 8px;
+  margin-right: -136px;
 }
 
 </style>

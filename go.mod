@@ -4,6 +4,7 @@ go 1.23.0
 
 require (
 	github.com/studio-b12/gowebdav v0.12.0
+	github.com/timsims/pamphlet v0.1.6
 	github.com/wailsapp/wails/v2 v2.12.0
 )
 

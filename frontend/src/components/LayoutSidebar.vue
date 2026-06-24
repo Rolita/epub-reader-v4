@@ -127,7 +127,25 @@ const textAligns = [
         </div>
       </div>
 
-      
+      <!-- 页眉显示 -->
+      <div class="setting-item">
+        <label class="setting-label">页眉</label>
+        <div class="align-buttons">
+          <button 
+            :class="['align-btn', { active: settingsStore.showHeader }]"
+            @click="settingsStore.showHeader = true"
+          >
+            显示
+          </button>
+          <button 
+            :class="['align-btn', { active: !settingsStore.showHeader }]"
+            @click="settingsStore.showHeader = false"
+          >
+            隐藏
+          </button>
+        </div>
+      </div>
+
     </div>
   </div>
 </template>

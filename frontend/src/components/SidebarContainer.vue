@@ -9,6 +9,7 @@
       v-bind="componentProps" 
       @switch-view="switchView"
       @jump="handleJump"
+      @preview="handlePreview"
       @open-shelf="handleOpenShelf"
       @add-theme="handleAddTheme"
       @edit-theme="handleEditTheme"
@@ -32,6 +33,7 @@ import LayoutSidebar from './LayoutSidebar.vue';
 import ThemeSidebar from './ThemeSidebar.vue';
 import WebDavSidebar from './WebDavSidebar.vue';
 import BookshelfLayoutSidebar from './BookshelfLayoutSidebar.vue';
+import IllustrationSidebar from './IllustrationSidebar.vue';
 import { useSettingsStore } from '../stores/settings';
 
 const settingsStore = useSettingsStore();
@@ -70,17 +72,47 @@ const startResize = (e: MouseEvent) => {
 
 // 切换显示的逻辑
 const switchView = (viewName: string) => {
-  if (viewName === 'shelf') currentComponent.value = ShelfSidebar;
-  if (viewName === 'toc') currentComponent.value = TocSidebar;
-  if (viewName === 'layout') currentComponent.value = LayoutSidebar;
-  if (viewName === 'theme') currentComponent.value = ThemeSidebar;
-  if (viewName === 'webdav') currentComponent.value = WebDavSidebar;
-  if (viewName === 'bookshelf-layout') currentComponent.value = BookshelfLayoutSidebar;
+  if (viewName === 'shelf') {
+    currentComponent.value = ShelfSidebar;
+    settingsStore.showIllustrationSidebar = false;
+  }
+  if (viewName === 'toc') {
+    currentComponent.value = TocSidebar;
+    settingsStore.showIllustrationSidebar = false;
+  }
+  if (viewName === 'layout') {
+    currentComponent.value = LayoutSidebar;
+    settingsStore.showIllustrationSidebar = false;
+  }
+  if (viewName === 'theme') {
+    currentComponent.value = ThemeSidebar;
+    settingsStore.showIllustrationSidebar = false;
+  }
+  if (viewName === 'webdav') {
+    currentComponent.value = WebDavSidebar;
+    settingsStore.showIllustrationSidebar = false;
+  }
+  if (viewName === 'bookshelf-layout') {
+    currentComponent.value = BookshelfLayoutSidebar;
+    settingsStore.showIllustrationSidebar = false;
+  }
+  if (viewName === 'illustration') {
+    currentComponent.value = IllustrationSidebar;
+    settingsStore.showIllustrationSidebar = true;
+  }
+  if (viewName === 'none') {
+    settingsStore.showIllustrationSidebar = false;
+  }
 };
 
 // 处理目录跳转，传递给父组件
 const handleJump = (href: string) => {
   emit('jump', href);
+};
+
+// 处理图片预览，传递给父组件
+const handlePreview = (payload: { src: string; alt: string }) => {
+  emit('preview', payload);
 };
 
 // 处理打开书架
@@ -115,6 +147,7 @@ defineExpose({
 
 const emit = defineEmits<{
   (e: 'jump', href: string): void
+  (e: 'preview', payload: { src: string; alt: string }): void
   (e: 'open-shelf', shelfId: string, shelfName: string): void
   (e: 'add-theme'): void
   (e: 'edit-theme', themeId: string): void

@@ -26,7 +26,9 @@ const config = ref({
   password: ''
 });
 
-const loading = ref(false);
+const connecting = ref(false);
+const uploading = ref(false);
+const downloading = ref(false);
 const statusMessage = ref('');
 const statusType = ref<'success' | 'error' | ''>('');
 
@@ -81,7 +83,7 @@ const handleTestConnection = async () => {
   // 先保存配置再测试
   await saveConfig();
   
-  loading.value = true;
+  connecting.value = true;
   try {
     // @ts-ignore
     const res = await window.go.main.App.TestShelfWebDav(currentShelfName.value);
@@ -89,7 +91,7 @@ const handleTestConnection = async () => {
   } catch (e) {
     showToast('连接失败: ' + (e as Error).message, 'error');
   } finally {
-    loading.value = false;
+    connecting.value = false;
   }
 };
 
@@ -103,7 +105,7 @@ const handleUpload = async () => {
   // 先保存配置
   await saveConfig();
   
-  loading.value = true;
+  uploading.value = true;
   try {
     // @ts-ignore
     const res = await window.go.main.App.UploadShelf(currentShelfName.value);
@@ -111,7 +113,7 @@ const handleUpload = async () => {
   } catch (e) {
     showToast('上传失败: ' + (e as Error).message, 'error');
   } finally {
-    loading.value = false;
+    uploading.value = false;
   }
 };
 
@@ -122,7 +124,7 @@ const handleDownload = async () => {
     return;
   }
   
-  loading.value = true;
+  downloading.value = true;
   try {
     // @ts-ignore
     const res = await window.go.main.App.DownloadShelf(currentShelfName.value);
@@ -137,7 +139,7 @@ const handleDownload = async () => {
   } catch (e) {
     showToast('下载失败: ' + (e as Error).message, 'error');
   } finally {
-    loading.value = false;
+    downloading.value = false;
   }
 };
 
@@ -225,9 +227,9 @@ watch(() => store.activeShelfId, (newId) => {
         <button 
           class="btn btn-primary" 
           @click="handleTestConnection"
-          :disabled="loading"
+          :disabled="connecting"
         >
-          {{ loading ? '连接中...' : '测试连接' }}
+          {{ connecting ? '连接中...' : '测试连接' }}
         </button>
       </div>
       
@@ -238,16 +240,16 @@ watch(() => store.activeShelfId, (newId) => {
           <button 
             class="btn btn-upload" 
             @click="handleUpload"
-            :disabled="loading"
+            :disabled="uploading"
           >
-            {{ loading ? '上传中...' : '上传' }}
+            {{ uploading ? '上传中...' : '上传' }}
           </button>
           <button 
             class="btn btn-download" 
             @click="handleDownload"
-            :disabled="loading"
+            :disabled="downloading"
           >
-            {{ loading ? '下载中...' : '下载' }}
+            {{ downloading ? '下载中...' : '下载' }}
           </button>
         </div>
       </div>

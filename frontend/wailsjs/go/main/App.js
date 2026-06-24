@@ -14,6 +14,10 @@ export function CopyFile(arg1, arg2, arg3) {
   return window['go']['main']['App']['CopyFile'](arg1, arg2, arg3);
 }
 
+export function CopyImageToClipboard(arg1) {
+  return window['go']['main']['App']['CopyImageToClipboard'](arg1);
+}
+
 export function CreateShelf(arg1) {
   return window['go']['main']['App']['CreateShelf'](arg1);
 }
@@ -48,6 +52,10 @@ export function ForceQuit() {
 
 export function GetBooksDir() {
   return window['go']['main']['App']['GetBooksDir']();
+}
+
+export function GetEpubImageByPath(arg1, arg2) {
+  return window['go']['main']['App']['GetEpubImageByPath'](arg1, arg2);
 }
 
 export function GetFileBytes(arg1) {
@@ -86,8 +94,16 @@ export function OpenFileLocation(arg1) {
   return window['go']['main']['App']['OpenFileLocation'](arg1);
 }
 
+export function ProcessAndImportEpub(arg1, arg2) {
+  return window['go']['main']['App']['ProcessAndImportEpub'](arg1, arg2);
+}
+
 export function ReadFile(arg1) {
   return window['go']['main']['App']['ReadFile'](arg1);
+}
+
+export function RegisterEpubTab(arg1, arg2) {
+  return window['go']['main']['App']['RegisterEpubTab'](arg1, arg2);
 }
 
 export function RenameShelf(arg1, arg2) {
@@ -152,6 +168,10 @@ export function TestShelfWebDav(arg1) {
 
 export function TriggerAutoSync(arg1) {
   return window['go']['main']['App']['TriggerAutoSync'](arg1);
+}
+
+export function UnregisterEpubTab(arg1) {
+  return window['go']['main']['App']['UnregisterEpubTab'](arg1);
 }
 
 export function UploadShelf(arg1) {

@@ -10,7 +10,7 @@
       @mouseup="handleMouseUp"
       @mouseleave="handleMouseUp"
       @wheel.prevent="handleWheel"
-      @contextmenu.prevent="showContextMenu"
+      @contextmenu.prevent="rotateLeft"
     >
       <!-- 关闭按钮 -->
       <button class="preview-close" @click="close">×</button>
@@ -21,6 +21,33 @@
           <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
           <polyline points="7 10 12 15 17 10"/>
           <line x1="12" y1="15" x2="12" y2="3"/>
+        </svg>
+      </button>
+      
+      <!-- 复制按钮 -->
+      <button class="preview-copy" @click="copyImage" title="复制图片">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+        </svg>
+      </button>
+      
+      <!-- 复制成功提示 -->
+      <div v-if="showCopySuccess" class="copy-success-tip">已复制</div>
+      
+      <!-- 左旋转按钮 -->
+      <button class="preview-rotate preview-rotate-left" @click="rotateLeft" title="向左旋转">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="1 4 1 10 7 10"/>
+          <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
+        </svg>
+      </button>
+      
+      <!-- 右旋转按钮 -->
+      <button class="preview-rotate preview-rotate-right" @click="rotateRight" title="向右旋转">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="23 4 23 10 17 10"/>
+          <path d="M20.49 15a9 9 0 1 1-2.13-9.36L23 10"/>
         </svg>
       </button>
 
@@ -35,18 +62,6 @@
           draggable="false"
           @mousedown.stop="handleImageMouseDown"
         />
-      </div>
-
-      <!-- 右键菜单 -->
-      <div 
-        v-if="contextMenuVisible" 
-        class="preview-context-menu"
-        :style="{ left: contextMenuPos.x + 'px', top: contextMenuPos.y + 'px' }"
-        @click.stop
-      >
-        <button @click="saveImage">保存图片</button>
-        <button @click="copyImage">复制图片</button>
-        <button @click="contextMenuVisible = false">取消</button>
       </div>
     </div>
   </Teleport>
@@ -69,15 +84,16 @@ const emit = defineEmits<{
 const scale = ref(1)
 const positionX = ref(0)
 const positionY = ref(0)
+const rotation = ref(0)
 const isDragging = ref(false)
 const dragStartX = ref(0)
 const dragStartY = ref(0)
 const startPosX = ref(0)
 const startPosY = ref(0)
 
-// 右键菜单
-const contextMenuVisible = ref(false)
-const contextMenuPos = ref({ x: 0, y: 0 })
+// 复制成功提示
+const showCopySuccess = ref(false)
+let copySuccessTimer: number | null = null
 
 // 当前图片源
 const currentSrc = computed(() => props.src)
@@ -91,7 +107,7 @@ const wrapperStyle = computed(() => ({
 }))
 
 const imageStyle = computed(() => ({
-  transform: `translate(${positionX.value}px, ${positionY.value}px) scale(${scale.value})`,
+  transform: `translate(${positionX.value}px, ${positionY.value}px) scale(${scale.value}) rotate(${rotation.value}deg)`,
   transition: isDragging.value ? 'none' : 'transform 0.1s ease-out'
 }))
 
@@ -102,7 +118,17 @@ const close = () => {
   scale.value = 1
   positionX.value = 0
   positionY.value = 0
-  contextMenuVisible.value = false
+  rotation.value = 0
+}
+
+// 向左旋转
+const rotateLeft = () => {
+  rotation.value -= 90
+}
+
+// 向右旋转
+const rotateRight = () => {
+  rotation.value += 90
 }
 
 // 点击遮罩关闭
@@ -157,16 +183,8 @@ const handleDoubleClick = () => {
   positionY.value = 0
 }
 
-// 显示右键菜单
-const showContextMenu = (e: MouseEvent) => {
-  e.preventDefault()
-  contextMenuPos.value = { x: e.clientX, y: e.clientY }
-  contextMenuVisible.value = true
-}
-
 // 保存图片
 const saveImage = async () => {
-  contextMenuVisible.value = false
   try {
     // 创建一个 <a> 标签下载
     const link = document.createElement('a')
@@ -190,15 +208,21 @@ const saveImage = async () => {
 
 // 复制图片
 const copyImage = async () => {
-  contextMenuVisible.value = false
   try {
-    const response = await fetch(currentSrc.value)
-    const blob = await response.blob()
-    await navigator.clipboard.write([
-      new ClipboardItem({ [blob.type]: blob })
-    ])
+    // @ts-ignore
+    await window.go.main.App.CopyImageToClipboard(currentSrc.value)
+    
+    // 显示复制成功提示
+    showCopySuccess.value = true
+    if (copySuccessTimer) clearTimeout(copySuccessTimer)
+    copySuccessTimer = window.setTimeout(() => {
+      showCopySuccess.value = false
+    }, 2000)
+    
+    console.log('复制成功')
   } catch (err) {
     console.error('复制图片失败:', err)
+    alert('复制失败，请尝试右键保存图片')
   }
 }
 
@@ -209,7 +233,7 @@ watch(() => props.visible, (newVal) => {
     scale.value = 1
     positionX.value = 0
     positionY.value = 0
-    contextMenuVisible.value = false
+    rotation.value = 0
     document.body.style.overflow = 'hidden'
   } else {
     document.body.style.overflow = ''
@@ -258,7 +282,7 @@ watch(() => props.visible, (newVal) => {
 .preview-save {
   position: absolute;
   top: 20px;
-  right: 80px;
+  right: 74px;
   width: 44px;
   height: 44px;
   border: none;
@@ -277,6 +301,90 @@ watch(() => props.visible, (newVal) => {
   background: rgba(255, 255, 255, 0.2);
 }
 
+.preview-copy {
+  position: absolute;
+  top: 20px;
+  right: 140px;
+  width: 44px;
+  height: 44px;
+  border: none;
+  background: rgba(255, 255, 255, 0.1);
+  color: white;
+  cursor: pointer;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s;
+  z-index: 10;
+}
+
+.preview-copy:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.preview-rotate {
+  position: absolute;
+  top: 20px;
+  width: 44px;
+  height: 44px;
+  border: none;
+  background: rgba(255, 255, 255, 0.1);
+  color: white;
+  cursor: pointer;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s;
+  z-index: 10;
+}
+
+.preview-rotate:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.preview-rotate-left {
+  right: 200px;
+}
+
+.preview-rotate-right {
+  right: 260px;
+}
+
+.copy-success-tip {
+  position: absolute;
+  top: 80px;
+  right: 140px;
+  background: rgba(0, 0, 0, 0.7);
+  color: white;
+  padding: 8px 16px;
+  border-radius: 20px;
+  font-size: 14px;
+  pointer-events: none;
+  animation: fadeInOut 2s ease-in-out;
+  z-index: 20;
+}
+
+@keyframes fadeInOut {
+  0% {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  20% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  80% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+}
+
 .preview-image-wrapper {
   max-width: 90vw;
   max-height: 90vh;
@@ -289,32 +397,5 @@ watch(() => props.visible, (newVal) => {
   object-fit: contain;
   user-select: none;
   pointer-events: auto;
-}
-
-.preview-context-menu {
-  position: fixed;
-  background: #2a2a2a;
-  border: 1px solid #444;
-  border-radius: 8px;
-  padding: 6px 0;
-  min-width: 140px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
-  z-index: 100;
-}
-
-.preview-context-menu button {
-  display: block;
-  width: 100%;
-  padding: 10px 20px;
-  border: none;
-  background: none;
-  color: white;
-  text-align: left;
-  cursor: pointer;
-  font-size: 14px;
-}
-
-.preview-context-menu button:hover {
-  background: #3a3a3a;
 }
 </style>

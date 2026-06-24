@@ -7,6 +7,11 @@
     <!-- 加载动画 -->
     <LoadingOverlay v-if="isLoading" />
     
+    <!-- 页眉栏 -->
+    <div class="reader-header" v-if="settingsStore.showHeader && currentChapterTitle">
+      <span class="chapter-title">{{ currentChapterTitle }}</span>
+    </div>
+    
     <div ref="viewerContainer" class="viewer-container" :class="{ 'hidden': isLoading }"></div>
     
     <div class="reader-controls" :class="{ 'hidden': isLoading }">
@@ -47,7 +52,12 @@ import { useThemeStore } from '../stores/theme';
 import { saveReaderProgress, restoreReaderProgress } from '../composables/useReaderProgress';
 import FullscreenIcon from './icons/FullscreenIcon.vue';
 
-const props = defineProps<{ filePath: string }>();
+const props = defineProps<{ filePath: string; isSplitMode?: boolean; isActive?: boolean; tabId?: string }>();
+const emit = defineEmits<{ 
+  (e: 'click'): void;
+  (e: 'scroll'): void;
+  (e: 'ready'): void;
+}>();
 const viewerContainer = ref<HTMLElement | null>(null);
 
 // 图片预览相关状态
@@ -57,6 +67,11 @@ const previewImageAlt = ref('')
 
 // 全屏状态
 const isFullscreen = ref(false)
+
+// 当前章节标题
+const currentChapterTitle = ref('')
+// 当前书籍的目录（组件内部维护，不依赖全局 store）
+const bookToc = ref<any[]>([])
 
 // 图片预览方法
 const openImagePreview = (src: string, alt: string = '') => {
@@ -69,117 +84,7 @@ const closeImagePreview = () => {
   imagePreviewVisible.value = false
 }
 
-// 将图片点击事件注入到 epub 渲染内容中
-const injectImageClickHandler = () => {
-  if (!rendition) return
 
-  // 使用 hooks.content 在 iframe 内容加载时绑定事件
-  rendition.hooks.content.register((contents: any) => {
-    const doc = contents.document
-    if (!doc) return
-
-    const bindEventsToImages = () => {
-      // 1. 绑定普通 <img>
-      const images = doc.querySelectorAll('img')
-      images.forEach((img: HTMLImageElement) => {
-        if (img.dataset.previewBound) return
-        img.dataset.previewBound = 'true'
-        img.style.cursor = 'zoom-in'
-        bindImageEvents(img)
-      })
-
-      // 2. 绑定 SVG 内的 <image> 标签
-      const svgImages = doc.querySelectorAll('svg image')
-      svgImages.forEach((svgImg: any) => {
-        if (svgImg.dataset.previewBound) return
-        svgImg.dataset.previewBound = 'true'
-        svgImg.style.cursor = 'zoom-in'
-        // SVG image 需要通过 xlink:href 或 href 获取 src
-        let src = svgImg.getAttribute('xlink:href') || svgImg.getAttribute('href')
-        if (src) {
-          // 相对路径需要转换为完整 URL
-          if (!src.startsWith('data:') && !src.startsWith('http') && !src.startsWith('blob:')) {
-            const baseUrl = doc.baseURI || window.location.href
-            const imgPath = src.startsWith('/') ? src : new URL(src, baseUrl).href
-            src = imgPath
-          }
-          svgImg.addEventListener('click', (e: Event) => {
-            e.preventDefault()
-            e.stopPropagation()
-            openImagePreview(src, svgImg.getAttribute('alt') || '')
-          })
-          svgImg.addEventListener('contextmenu', (e: Event) => {
-            e.preventDefault()
-            previewImageSrc.value = src
-            previewImageAlt.value = svgImg.getAttribute('alt') || ''
-          })
-        }
-      })
-    }
-
-    const bindImageEvents = (img: HTMLImageElement) => {
-      img.addEventListener('click', (e) => {
-        e.preventDefault()
-        e.stopPropagation()
-        let src = img.src
-        if (!src || src === 'about:blank') {
-          const currentSrc = (img as any).currentSrc || img.getAttribute('src')
-          if (currentSrc) src = currentSrc
-        }
-        openImagePreview(src, img.alt || '')
-      })
-
-      img.addEventListener('contextmenu', (e) => {
-        e.preventDefault()
-        let src = img.src
-        if (!src || src === 'about:blank') {
-          const currentSrc = (img as any).currentSrc || img.getAttribute('src')
-          if (currentSrc) src = currentSrc
-        }
-        previewImageSrc.value = src
-        previewImageAlt.value = img.alt || ''
-      })
-    }
-
-    // 立即绑定一次
-    bindEventsToImages()
-
-    // 监听动态加载的图片
-    const observer = new MutationObserver(() => {
-      bindEventsToImages()
-    })
-    observer.observe(doc.body || doc.documentElement, {
-      childList: true,
-      subtree: true
-    })
-  })
-
-  // 同时监听 rendered 确保首次渲染也能触发
-  rendition.on('rendered', () => {
-    // rendered 时再次触发绑定，防止 hooks.content 未触发
-    setTimeout(() => {
-      const doc = rendition?.manager?.container?.contentDocument
-      if (doc) {
-        const images = doc.querySelectorAll('img')
-        images.forEach((img: HTMLImageElement) => {
-          if (img.dataset.previewBound) return
-          img.dataset.previewBound = 'true'
-          img.style.cursor = 'zoom-in'
-          img.addEventListener('click', (e) => {
-            e.preventDefault()
-            e.stopPropagation()
-            let src = img.src
-            if (!src || src === 'about:blank') {
-              const currentSrc = (img as any).currentSrc || img.getAttribute('src')
-              if (currentSrc) src = currentSrc
-            }
-            openImagePreview(src, img.alt || '')
-          })
-        })
-      }
-    }, 100)
-  })
-}
 
 let book: any = null;
 let rendition: any = null;
@@ -201,7 +106,12 @@ const applyTypography = () => {
   }
 
   const colors = themeStore.themeColors;
-  
+
+  // 清空 epub.js 内部累积的 injected 样式，避免重复 style 标签
+  if (rendition.themes._injected) {
+    rendition.themes._injected = [];
+  }
+
   // 使用 default 方法直接作用于基础渲染层
   rendition.themes.default({
     body: {
@@ -248,45 +158,57 @@ const injectPowerfulStyles = () => {
        text-align: ${settingsStore.textAlign} !important;
        letter-spacing: ${settingsStore.letterSpacing}px !important;
      }
-    /* 4. 强力覆盖所有文本元素的字号和字体 */
-    body, div, span, h1, h2, h3, h4, h5, h6,
-    li, td, th, blockquote, pre, a, strong, em,
-    b, i, u, s, strike, sub, sup, code, var,
-    article, section, header, footer, nav {
-      font-size: ${settingsStore.fontSize}px !important;
-      line-height: ${settingsStore.lineHeight} !important;
-      font-family: ${settingsStore.fontFamily} !important;
-      text-align: ${settingsStore.textAlign} !important;
-      letter-spacing: ${settingsStore.letterSpacing}px !important;
-    }
-    /* 5. 确保根元素也被覆盖 */
-    html {
-      font-size: ${settingsStore.fontSize}px !important;
-    }
-    /* 6. 图片和表格不应该被影响 */
-    img, svg, canvas, table, tr, td, th {
-      font-size: initial !important;
-      line-height: initial !important;
-    }
-    /* 7. 标题样式优化 */
-    h1, h2, h3, h4, h5, h6 {
-      margin-top: 1.5em !important;
-      margin-bottom: 0.5em !important;
-      font-weight: bold !important;
-    }
-    /* 8. 列表样式优化 */
-    ul, ol {
-      margin-top: 0 !important;
-      margin-bottom: ${settingsStore.paragraphGap}px !important;
-      padding-left: 2em !important;
-    }
-    li {
-      margin-top: 0 !important;
-      margin-bottom: 0.3em !important;
-    }
-  `;
+    /* 4. 强力覆盖所有文本元素的字号和字体 */
+    body, div, span, h1, h2, h3, h4, h5, h6,
+    li, td, th, blockquote, pre, a, strong, em,
+    b, i, u, s, strike, sub, sup, code, var,
+    article, section, header, footer, nav {
+      font-size: ${settingsStore.fontSize}px !important;
+      line-height: ${settingsStore.lineHeight} !important;
+      font-family: ${settingsStore.fontFamily} !important;
+      text-align: ${settingsStore.textAlign} !important;
+      letter-spacing: ${settingsStore.letterSpacing}px !important;
+    }
+    /* 5. 确保根元素也被覆盖 */
+    html {
+      font-size: ${settingsStore.fontSize}px !important;
+    }
+    /* 6. 图片和表格不应该被影响 */
+    img, svg, canvas, table, tr, td, th {
+      font-size: initial !important;
+      line-height: initial !important;
+    }
+    /* 7. 标题样式优化 */
+    h1, h2, h3, h4, h5, h6 {
+      margin-top: 1.5em !important;
+      margin-bottom: 0.5em !important;
+      font-weight: bold !important;
+    }
+    /* 8. 列表样式优化 */
+    ul, ol {
+      margin-top: 0 !important;
+      margin-bottom: ${settingsStore.paragraphGap}px !important;
+      padding-left: 2em !important;
+    }
+    li {
+      margin-top: 0 !important;
+      margin-bottom: 0.3em !important;
+    }
+  `;
 
-  rendition.themes.append(css);
+  // 直接注入到 iframe DOM，避免 epub.js append 累积 style 标签
+  const contents = rendition.getContents ? rendition.getContents() : [];
+  contents.forEach((content: any) => {
+    const doc = content.document;
+    if (!doc) return;
+    let style = doc.getElementById('readest-typography-style');
+    if (!style) {
+      style = doc.createElement('style');
+      style.id = 'readest-typography-style';
+      doc.head.appendChild(style);
+    }
+    style.textContent = css;
+  });
 };
 
 // 应用主题到 EPUB 内容
@@ -297,7 +219,12 @@ const applyTheme = () => {
   }
 
   const colors = themeStore.themeColors;
-  
+
+  // 清空 epub.js 内部累积的 injected 样式，避免重复 style 标签
+  if (rendition.themes._injected) {
+    rendition.themes._injected = [];
+  }
+
   // 强制设置默认主题色
   rendition.themes.default({
     body: {
@@ -309,8 +236,8 @@ const applyTheme = () => {
     }
   });
 
-  // 追加更强制的 CSS 覆盖
-  rendition.themes.append(`
+  // 直接注入到 iframe DOM，避免 epub.js append 累积 style 标签
+  const themeCss = `
     * {
       color: ${colors.text} !important;
       background-color: transparent !important;
@@ -327,17 +254,76 @@ const applyTheme = () => {
     a {
       color: ${colors.text} !important;
     }
-  `);
+  `;
+
+  const contents = rendition.getContents ? rendition.getContents() : [];
+  contents.forEach((content: any) => {
+    const doc = content.document;
+    if (!doc) return;
+    let style = doc.getElementById('readest-theme-style');
+    if (!style) {
+      style = doc.createElement('style');
+      style.id = 'readest-theme-style';
+      doc.head.appendChild(style);
+    }
+    style.textContent = themeCss;
+  });
+};
+
+// 获取 href 中的文件名部分
+const getFileName = (href: string) => {
+  if (!href) return '';
+  const url = new URL(href, 'http://example.com');
+  return url.pathname.split('/').pop() || '';
+};
+
+// 更新当前章节标题
+const updateChapterTitle = (section?: any) => {
+  const toc = bookToc.value;
+  if (!toc || toc.length === 0) return;
+  
+  let currentHref = '';
+  
+  if (section && section.href) {
+    currentHref = section.href;
+  } else if (rendition?.location?.start?.href) {
+    currentHref = rendition.location.start.href;
+  } else if (section && section.cfi) {
+    const startPos = section.cfi.indexOf('/') + 1;
+    const endPos = section.cfi.indexOf('/', startPos);
+    if (endPos > startPos) {
+      currentHref = section.cfi.substring(startPos, endPos);
+    }
+  } else {
+    return;
+  }
+  
+  const currentFileName = getFileName(currentHref);
+  
+  let currentChapter = toc.find(item => {
+    const itemFileName = getFileName(item.href);
+    return currentFileName === itemFileName;
+  });
+  
+  if (!currentChapter) {
+    currentChapter = toc.find(item => {
+      return currentHref.includes(item.href);
+    });
+  }
+  
+  currentChapterTitle.value = currentChapter?.label || '';
 };
 
 // 清理内联样式并重新应用排版
 const clearInlineStyles = () => {
   if (!rendition) return;
-  
+
   rendition.on('rendered', (section: any) => {
     const doc = section.document;
     if (!doc) return;
-    
+
+    updateChapterTitle(section);
+
     const elements = doc.querySelectorAll('*');
     elements.forEach((el: any) => {
       el.style.removeProperty('color');
@@ -350,10 +336,11 @@ const clearInlineStyles = () => {
       el.style.removeProperty('font-weight');
       el.style.removeProperty('text-align');
     });
-    
+
     requestAnimationFrame(() => {
       if (rendition && rendition.themes) {
         injectPowerfulStyles();
+        applyTheme();
       }
     });
   });
@@ -390,23 +377,21 @@ const prevPage = () => rendition?.prev();
 const nextPage = () => rendition?.next();
 
 const initReader = async () => {
-  try {
-    // 开始加载
-    isLoading.value = true
-    
-    if (rendition) {
-      rendition.destroy();
-      rendition = null;
-    }
-    book = null;
+	try {
+		isLoading.value = true
+		
+		if (rendition) {
+			rendition.destroy();
+			rendition = null;
+		}
+		book = null;
 
-    // 1. 从 Go 获取文件内容
-    // @ts-ignore
-    const base64Data = await window.go.main.App.GetFileBytes(props.filePath);
-    const buffer = base64ToBuffer(base64Data);
+		// 1. 构建本地文件服务 URL
+		const encodedPath = encodeURIComponent(props.filePath);
+		const epubUrl = `/local-file/${encodedPath}`;
 
-    // 2. 初始化 epub.js
-    book = Epub(buffer);
+		// 2. 初始化 epub.js - 直接使用 URL，避免 Base64 编码开销
+		book = Epub(epubUrl);
 
     // 3. 加载书籍导航信息（目录）
     await book.ready;
@@ -415,16 +400,24 @@ const initReader = async () => {
     
     // 4. 更新 Pinia store
     bookStore.setActiveBook(props.filePath, toc);
+    // 5. 保存到组件内部，供分屏模式使用
+    bookToc.value = toc;
+
+    // 6. 注册 tabId 和 EPUB 文件路径的映射
+    if (props.tabId) {
+      // @ts-ignore
+      await window.go.main.App.RegisterEpubTab(props.tabId, props.filePath)
+    }
 
     if (viewerContainer.value) {
       rendition = book.renderTo(viewerContainer.value, {
         width: '100%',
         height: '100%',
         flow: 'paginated',
-        spread: 'always',
+        spread: props.isSplitMode ? 'none' : 'always',
       });
 
-      // 5. 注入滚轮监听钩子
+      // 5. 注入滚轮监听和点击焦点钩子
       rendition.hooks.content.register((contents: any) => {
         contents.window.addEventListener('wheel', (event: WheelEvent) => {
           if (isScrolling) return;
@@ -440,14 +433,75 @@ const initReader = async () => {
 
           // 400ms 防抖，防止连翻
           setTimeout(() => { isScrolling = false; }, 50);
+
+          // 触发 scroll 事件，用于更新焦点
+          emit('scroll')
         }, { passive: false });
+
+        const doc = contents.document
+
+        // 绑定图片点击预览事件
+        const bindImageEvents = () => {
+          const images = doc.querySelectorAll('img')
+          images.forEach((img: HTMLImageElement) => {
+            if (img.dataset.previewBound) return
+            img.dataset.previewBound = 'true'
+            img.style.cursor = 'zoom-in'
+            img.addEventListener('click', (e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              let src = img.src
+              if (!src || src === 'about:blank') {
+                const currentSrc = (img as any).currentSrc || img.getAttribute('src')
+                if (currentSrc) src = currentSrc
+              }
+              openImagePreview(src, img.alt || '')
+            })
+          })
+
+          const svgImages = doc.querySelectorAll('svg image')
+          svgImages.forEach((svgImg: any) => {
+            if (svgImg.dataset.previewBound) return
+            svgImg.dataset.previewBound = 'true'
+            svgImg.style.cursor = 'zoom-in'
+            let src = svgImg.getAttribute('xlink:href') || svgImg.getAttribute('href')
+            if (src) {
+              if (!src.startsWith('data:') && !src.startsWith('http') && !src.startsWith('blob:')) {
+                const baseUrl = doc.baseURI || window.location.href
+                const imgPath = src.startsWith('/') ? src : new URL(src, baseUrl).href
+                src = imgPath
+              }
+              svgImg.addEventListener('click', (e: Event) => {
+                e.preventDefault()
+                e.stopPropagation()
+                openImagePreview(src, svgImg.getAttribute('alt') || '')
+              })
+            }
+          })
+        }
+
+        bindImageEvents()
+
+        const observer = new MutationObserver(() => {
+          bindImageEvents()
+        })
+        observer.observe(doc.body || doc.documentElement, {
+          childList: true,
+          subtree: true
+        })
+
+        // 点击事件只在非图片元素上触发
+        doc.addEventListener('click', (e: Event) => {
+          const target = e.target as HTMLElement
+          if (target.tagName === 'IMG' || target.closest('img')) {
+            return
+          }
+          emit('click')
+        });
       });
 
       // 7. 注册内联样式清理（在每章渲染后执行）
       clearInlineStyles();
-
-      // 8. 注入图片点击预览功能
-      injectImageClickHandler();
 
       // 9. 使用渲染钩子确保主题在内容渲染后应用
       rendition.hooks.render.register(() => {
@@ -459,23 +513,26 @@ const initReader = async () => {
         }
       });
 
-      // 9. 初始化渲染（从书籍开头开始）
-      await rendition.display();
-
-      // 9.5 自动恢复阅读进度（模拟手动点击恢复按钮，连续两次）
+      // 9. 先获取阅读进度，直接加载到上次阅读位置
+      let startCfi: string | undefined
       try {
         // @ts-ignore
         const progressJSON = await window.go.main.App.GetProgress(props.filePath)
         if (progressJSON) {
           const progress = JSON.parse(progressJSON)
           if (progress.cfi) {
-            await restoreReaderProgress(rendition, progress.cfi, () => viewerContainer.value?.focus())
-            await restoreReaderProgress(rendition, progress.cfi, () => viewerContainer.value?.focus())
-            console.log('已自动恢复阅读进度:', progress.cfi)
+            startCfi = progress.cfi
+            console.log('将从进度位置开始:', progress.cfi)
           }
         }
       } catch (e) {
-        console.error('自动恢复进度失败:', e)
+        console.error('获取阅读进度失败:', e)
+      }
+
+      // 9.1 初始化渲染（从上次阅读位置或书籍开头开始）
+      await rendition.display(startCfi || undefined);
+      if (startCfi) {
+        viewerContainer.value?.focus()
       }
 
       // 10. 在 display 完成后手动再应用一次（兜底）
@@ -486,6 +543,9 @@ const initReader = async () => {
       }
 
       console.log("阅读器初始化完成");
+      
+      // 通知父组件书籍已加载完成
+      emit('ready')
       
       // 加载完成，隐藏加载动画
       isLoading.value = false
@@ -498,6 +558,10 @@ const initReader = async () => {
 };
 
 const handleKey = (e: KeyboardEvent) => {
+  if (props.isSplitMode && !props.isActive) {
+    return
+  }
+  
   if (e.key === 'ArrowLeft') prevPage();
   if (e.key === 'ArrowRight') nextPage();
   
@@ -621,9 +685,12 @@ const handleFullscreenChange = () => {
 };
 
 // 跳转到指定章节
-const jumpTo = (href: string) => {
+const jumpTo = (href: string, cfi?: string) => {
   if (rendition) {
-    rendition.display(href).then(() => {
+    // 如果有 CFI，使用 CFI 精确定位；否则直接跳转到章节
+    const target = cfi || href
+    console.log('[插图跳转] 跳转到:', target)
+    rendition.display(target).then(() => {
       // 跳转后切回焦点，确保键盘翻页可用
       viewerContainer.value?.focus();
     });
@@ -639,12 +706,168 @@ const updateBookStore = () => {
   }
 };
 
+// 从 epubjs book 对象收集所有插图
+const collectIllustrationsFromBook = async (): Promise<{ src: string; alt: string; index: number; href: string; chapterHref: string; chapterTitle: string; cfi: string }[]> => {
+  const illustrations: { src: string; alt: string; index: number; href: string; chapterHref: string; chapterTitle: string; cfi: string }[] = []
+  if (!book) return illustrations
+  
+  console.log('[插图收集] 开始从 epubjs book 收集插图')
+  
+  // 获取目录信息用于显示章节名称
+  const navigation = book.navigation
+  const toc = navigation ? flattenToc(navigation.toc) : []
+  
+  try {
+    const images: { src: string; alt: string; href: string }[] = []
+    
+    if (book.resources && book.resources.resources) {
+      console.log('[插图收集] resources.resources 长度:', book.resources.resources.length)
+      
+      for (const resource of book.resources.resources) {
+        if (!resource) continue
+        
+        const href = resource.href || resource.id || ''
+        if (!href) continue
+        
+        if (isImageFile(href)) {
+          console.log('[插图收集] 资源结构:', JSON.stringify(resource))
+          
+          const resPath = href
+          const imageUrl = props.tabId ? `/epub-img/${props.tabId}/${resPath}` : resPath
+          
+          console.log('[插图收集] 找到图片:', href, '→', imageUrl)
+          images.push({ src: imageUrl, alt: href.split('/').pop() || '', href: resPath })
+        }
+      }
+    }
+    
+    if (images.length === 0 && book.resources && book.resources.assets) {
+      console.log('[插图收集] resources.assets 长度:', book.resources.assets.length)
+      
+      for (const asset of book.resources.assets) {
+        if (!asset) continue
+        
+        const href = asset.href || asset.id || ''
+        if (!href) continue
+        
+        if (isImageFile(href)) {
+          const resPath = href
+          const imageUrl = props.tabId ? `/epub-img/${props.tabId}/${resPath}` : resPath
+          
+          console.log('[插图收集] 从 assets 找到图片:', href, '→', imageUrl)
+          images.push({ src: imageUrl, alt: href.split('/').pop() || '', href: resPath })
+        }
+      }
+    }
+    
+    // 为每张图片找到所属章节
+    for (let i = 0; i < images.length; i++) {
+      const result = await findChapterContainingImage(images[i].href)
+      console.log('[插图收集] 图片', images[i].href, '所属章节:', result.href, 'CFI:', result.cfi)
+      
+      // 根据 chapterHref 查找章节名称
+      const tocItem = toc.find(item => item.href === result.href || item.href.startsWith(result.href))
+      const chapterTitle = tocItem?.label || ''
+      
+      illustrations.push({
+        src: images[i].src,
+        alt: images[i].alt,
+        index: i,
+        href: images[i].href,
+        chapterHref: result.href,
+        chapterTitle: chapterTitle,
+        cfi: result.cfi
+      })
+    }
+    
+    console.log('[插图收集] 完成，共收集', illustrations.length, '张图片')
+  } catch (err) {
+    console.error('[插图收集] 收集失败:', err)
+  }
+  
+  return illustrations
+}
+
+// 查找包含指定图片的章节，并返回 CFI 用于精确定位
+const findChapterContainingImage = async (imageHref: string): Promise<{ href: string; cfi: string }> => {
+  if (!book || !book.spine) return { href: '', cfi: '' }
+  
+  const sections: any[] = []
+  if (typeof book.spine.each === 'function') {
+    book.spine.each((section: any) => sections.push(section))
+  } else if (Array.isArray(book.spine)) {
+    sections.push(...book.spine)
+  } else if (book.spine.items) {
+    sections.push(...book.spine.items)
+  } else if (book.spine.spineItems) {
+    sections.push(...book.spine.spineItems)
+  }
+  
+  // 先尝试用字符串搜索方式找到章节
+  // 遍历章节但不加载完整内容，只检查 href 是否可能包含该图片
+  for (const section of sections) {
+    const sectionHref = section.href || ''
+    // 如果章节 href 本身包含图片路径相关的内容，优先使用
+    if (sectionHref.includes(imageHref.split('/').pop() || '')) {
+      return { href: sectionHref, cfi: '' }
+    }
+  }
+  
+  // 尝试加载章节并查找图片元素
+  for (const section of sections) {
+    try {
+      // 使用 book.load 来加载内容，这样路径会正确解析
+      const doc = await (book as any).load(section.href)
+      if (doc && typeof doc === 'object') {
+        const docEl = doc.documentElement ? doc : doc.ownerDocument || doc
+        const imgElements = docEl.getElementsByTagName ? docEl.getElementsByTagName('img') : []
+        
+        for (let j = 0; j < imgElements.length; j++) {
+          const src = imgElements[j].getAttribute('src') || ''
+          const srcSet = imgElements[j].getAttribute('srcset') || ''
+          if (src.includes(imageHref) || srcSet.includes(imageHref)) {
+            // 尝试生成 CFI
+            let cfi = ''
+            if (typeof section.cfiFromElement === 'function') {
+              try {
+                cfi = section.cfiFromElement(imgElements[j])
+              } catch (e) {
+                console.warn('[插图收集] 生成 CFI 失败')
+              }
+            }
+            return { href: section.href || '', cfi }
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('[插图收集] 加载章节失败:', section.href)
+    }
+  }
+  
+  // 如果所有章节都加载失败，返回第一个章节
+  return { href: sections[0]?.href || '', cfi: '' }
+}
+
+function isImageFile(filename: string): boolean {
+  const ext = filename.toLowerCase().split('.').pop() || ''
+  return ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'svg', 'webp'].includes(ext)
+}
+
+function isImageResource(resource: any): boolean {
+  if (!resource) return false
+  const href = resource.href || resource.id || ''
+  return isImageFile(href)
+}
+
 // 暴露方法给父组件调用
 defineExpose({
   jumpTo,
+  openImagePreview,
   restoreProgress: (cfi: string) => restoreReaderProgress(rendition, cfi, () => viewerContainer.value?.focus()),
   saveProgress: () => saveReaderProgress(rendition, props.filePath),
-  updateBookStore
+  updateBookStore,
+  refresh: () => initReader(),
+  getIllustrations: () => collectIllustrationsFromBook()
 });
 
 // 程序关闭前保存进度
@@ -679,6 +902,12 @@ onUnmounted(() => {
   clearInterval(autoSaveTimer);
   saveReaderProgress(rendition, props.filePath)
   if (rendition) rendition.destroy();
+  
+  // 注销 tabId 和 EPUB 文件路径的映射
+  if (props.tabId) {
+    // @ts-ignore
+    window.go.main.App.UnregisterEpubTab(props.tabId)
+  }
 });
 
 // 监听设置变化，实时应用排版
@@ -728,8 +957,30 @@ watch(() => props.filePath, async () => {
 .viewer-container {
   width: 100%;
   height: 100%;
-  padding: 60px 100px;
+  padding: 60px 100px 60px;
   box-sizing: border-box;
+}
+
+/* 页眉栏 */
+.reader-header {
+  position: absolute;
+  top: 20px;
+  left: 20px;
+  right: 20px;
+  height: 32px;
+  padding: 0 16px;
+  display: flex;
+  align-items: center;
+  z-index: 10;
+}
+
+.chapter-title {
+  font-size: 13px;
+  color: var(--text-secondary);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* 强制隐藏 iframe 的原生滚动条 */

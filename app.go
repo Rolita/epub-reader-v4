@@ -173,6 +173,11 @@ func (a *App) DeleteDirectory(dirPath string) error {
 	return book.DeleteDirectory(dirPath)
 }
 
+func (a *App) ProcessAndImportEpub(filePath, shelfName string) book.ImportResult {
+	booksDir := utils.GetBooksDir()
+	return book.ProcessAndImportEpub(filePath, shelfName, booksDir)
+}
+
 // FileExists 检查本地文件是否存在
 func (a *App) FileExists(filePath string) bool {
 	_, err := os.Stat(filePath)
@@ -645,4 +650,61 @@ func (a *App) GetWebDAVLogs() []webdav.LogEntry {
 // ClearWebDAVLogs 清空 WebDAV 交互日志
 func (a *App) ClearWebDAVLogs() {
 	webdav.GlobalLogger.Clear()
+}
+
+// CopyImageToClipboard 复制图片到剪贴板
+func (a *App) CopyImageToClipboard(imageURL string) error {
+	// 解析图片 URL，格式: /epub-img/{tabId}/{resPath}
+	parts := strings.Split(strings.TrimPrefix(imageURL, "/epub-img/"), "/")
+	if len(parts) < 2 {
+		return fmt.Errorf("invalid image URL format")
+	}
+
+	tabId := parts[0]
+	resPath := strings.Join(parts[1:], "/")
+
+	// 从 EPUB 文件中读取图片（直接返回二进制数据，无需 Base64）
+	imageData, _, err := a.GetEpubImageByPath(tabId, resPath)
+	if err != nil {
+		return fmt.Errorf("failed to read image: %w", err)
+	}
+
+	// 使用系统命令复制图片到剪贴板（直接使用二进制位图数据）
+	if runtime.GOOS == "windows" {
+		return copyImageToClipboardWindows(imageData)
+	}
+
+	return fmt.Errorf("unsupported platform: %s", runtime.GOOS)
+}
+
+// copyImageToClipboardWindows 在 Windows 上复制图片到剪贴板
+func copyImageToClipboardWindows(imageData []byte) error {
+	// 创建临时文件
+	tmpFile, err := os.CreateTemp("", "clipboard-*.png")
+	if err != nil {
+		return fmt.Errorf("failed to create temp file: %w", err)
+	}
+	defer os.Remove(tmpFile.Name())
+
+	if _, err := tmpFile.Write(imageData); err != nil {
+		tmpFile.Close()
+		return fmt.Errorf("failed to write temp file: %w", err)
+	}
+	tmpFile.Close()
+
+	// 使用 PowerShell 复制图片到剪贴板
+	psScript := fmt.Sprintf(`
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+$image = [System.Drawing.Image]::FromFile('%s')
+[Windows.Forms.Clipboard]::SetImage($image)
+$image.Dispose()
+`, tmpFile.Name())
+
+	cmd := exec.Command("powershell", "-Command", psScript)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to copy to clipboard: %w", err)
+	}
+
+	return nil
 }

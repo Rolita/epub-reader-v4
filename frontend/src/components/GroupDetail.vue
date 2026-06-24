@@ -15,6 +15,8 @@ import PlusIcon from './icons/PlusIcon.vue'
 import CustomModal from './CustomModal.vue'
 import CustomModalEx from './CustomModalEx.vue'
 
+const props = defineProps<{ groupId?: string }>()
+
 const emit = defineEmits<{
   (e: 'open-book', book: any): void
   (e: 'toggle-webdav'): void
@@ -74,11 +76,20 @@ const showAlert = (title: string, message: string, type: 'info' | 'warning' | 's
   showModal.value = true
 }
 
-// 当前分组
-const currentGroup = computed(() => store.activeGroup)
+// 当前分组（优先使用传入的 groupId）
+const currentGroup = computed(() => {
+  if (props.groupId) {
+    return store.currentGroups.find(g => g.id === props.groupId) || null
+  }
+  return store.activeGroup
+})
 
 // 当前分组的书籍列表
-const books = computed(() => store.groupBooks)
+const books = computed(() => {
+  const gid = props.groupId || store.activeGroupId
+  if (!gid) return []
+  return store.currentBooks.filter(b => b.groupId === gid)
+})
 
 const sortBooks = (items: any[]) => {
   const sortBy = settingsStore.sortBy
@@ -627,12 +638,12 @@ watch([store.activeShelf, books], async () => {
 onMounted(async () => {
   await checkAllBooksStatus()
   document.addEventListener('click', handleClickOutside)
-  document.addEventListener('contextmenu', handleClickOutsideContextMenu)
+  document.addEventListener('click', handleClickOutsideContextMenu)
 })
 
 onUnmounted(() => {
   document.removeEventListener('click', handleClickOutside)
-  document.removeEventListener('contextmenu', handleClickOutsideContextMenu)
+  document.removeEventListener('click', handleClickOutsideContextMenu)
 })
 
 const handleDeleteBook = (bookId: string) => {
@@ -875,7 +886,7 @@ const handleClickOutsideContextMenu = (event: MouseEvent) => {
         </button>
       </div>
       
-      <div v-else class="book-grid" :style="{ gridTemplateColumns: `repeat(${settingsStore.bookshelfColumns}, minmax(130px, 1fr))`, gap: `${settingsStore.coverGap}px` }">
+      <div v-else class="book-grid" :style="{ gridTemplateColumns: `repeat(${settingsStore.bookshelfColumns}, minmax(0, 1fr))`, gap: `${settingsStore.coverGap}px` }">
         <div 
           v-for="book in filteredBooks" 
           :key="book.id" 
@@ -1079,6 +1090,8 @@ const handleClickOutsideContextMenu = (event: MouseEvent) => {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
   padding: 16px 36px;
   border-bottom: 0px solid var(--border-color);
   user-select: none;
@@ -1101,6 +1114,7 @@ const handleClickOutsideContextMenu = (event: MouseEvent) => {
   display: flex;
   align-items: center;
   gap: 16px;
+  flex-shrink: 0;
 }
 
 .back-button {
@@ -1131,6 +1145,7 @@ const handleClickOutsideContextMenu = (event: MouseEvent) => {
 
 .topbar-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 14px;
   align-items: center;
 }
