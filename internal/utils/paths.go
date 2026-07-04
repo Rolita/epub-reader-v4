@@ -1,9 +1,14 @@
 package utils
 
 import (
+	"encoding/base64"
 	"os"
 	"path/filepath"
 )
+
+func Base64Decode(data string) ([]byte, error) {
+	return base64.StdEncoding.DecodeString(data)
+}
 
 const AppName = "my-epub-reader"
 

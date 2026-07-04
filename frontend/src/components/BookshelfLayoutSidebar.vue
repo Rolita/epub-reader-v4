@@ -139,10 +139,10 @@ const settingsStore = useSettingsStore();
 
 .setting-label {
   display: block;
-  font-size: 0.88rem;
+  font-size: 0.85rem;
   color: var(--text-secondary);
   margin-bottom: 10px;
-  font-weight: 500;
+  font-weight: 600;
 }
 
 .setting-control {
@@ -155,7 +155,7 @@ const settingsStore = useSettingsStore();
   width: 100%;
   height: 6px;
   border-radius: 3px;
-  background: var(--border-color);
+  background: var(--slider-bg, var(--border-color));
   appearance: none;
   cursor: pointer;
   transition: background var(--transition-fast);

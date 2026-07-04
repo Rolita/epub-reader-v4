@@ -5,8 +5,13 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -100,7 +105,7 @@ func DeleteDirectory(dirPath string) error {
 func extractEpubMetadata(epubFilePath string) (BookMetadata, []byte, string, error) {
 	metadata := BookMetadata{}
 	var coverData []byte
-	var coverInternalPath string // epub 内部的封面路径
+	var coverInternalPath string
 
 	parser, err := pamphlet.Open(epubFilePath)
 	if err != nil {
@@ -112,46 +117,387 @@ func extractEpubMetadata(epubFilePath string) (BookMetadata, []byte, string, err
 	metadata.Author = book.Author
 	metadata.Description = book.Description
 
-	// 尝试从 EPUB 中提取封面
-	coverPath := ""
-	for _, item := range book.ManifestItems {
-		// 查找具有 'cover' 属性的 item 或 media-type 为图像的 item
-		// 简单的启发式方法：查找文件名中包含 "cover" 或 "thumb" 的图片
-		if strings.Contains(strings.ToLower(item.Href), "cover") || strings.Contains(strings.ToLower(item.Href), "thumb") {
-			if strings.HasPrefix(item.MediaType, "image/") {
-				coverPath = item.Href
-				break
-			}
-		}
-	}
-
-	if coverPath != "" {
-		zipReader, err := zip.OpenReader(epubFilePath)
-		if err != nil {
-			return metadata, nil, "", fmt.Errorf("failed to open epub zip: %w", err)
-		}
-		defer zipReader.Close()
-
-		for _, f := range zipReader.File {
-			if strings.HasSuffix(f.Name, filepath.Base(coverPath)) {
-				rc, err := f.Open()
-				if err != nil {
-					continue
-				}
-				defer rc.Close()
-
-				data, err := io.ReadAll(rc)
-				if err != nil {
-					continue
-				}
-				coverData = data
-				coverInternalPath = coverPath
-				break
-			}
-		}
-	}
+	coverData, coverInternalPath = extractCover(epubFilePath)
 
 	return metadata, coverData, coverInternalPath, nil
+}
+
+func extractFirstImageSrc(htmlContent string) string {
+	lowerContent := strings.ToLower(htmlContent)
+
+	imgStart := strings.Index(lowerContent, "<img")
+	if imgStart == -1 {
+		imgStart = strings.Index(lowerContent, "<image")
+	}
+	if imgStart == -1 {
+		return ""
+	}
+
+	srcStart := strings.Index(lowerContent[imgStart:], "src=\"")
+	if srcStart == -1 {
+		srcStart = strings.Index(lowerContent[imgStart:], "src='")
+		if srcStart == -1 {
+			srcStart = strings.Index(lowerContent[imgStart:], "src=")
+			if srcStart == -1 {
+				return ""
+			}
+			srcStart += 4
+			for i := srcStart; i < len(lowerContent[imgStart:]); i++ {
+				c := lowerContent[imgStart+i]
+				if c != ' ' && c != '\t' && c != '\n' && c != '\r' {
+					srcStart = i
+					break
+				}
+			}
+		} else {
+			srcStart += 5
+		}
+	} else {
+		srcStart += 5
+	}
+
+	srcEnd := strings.Index(lowerContent[imgStart+srcStart:], "\"")
+	if srcEnd == -1 {
+		srcEnd = strings.Index(lowerContent[imgStart+srcStart:], "'")
+		if srcEnd == -1 {
+			for i := 0; i < len(lowerContent[imgStart+srcStart:]); i++ {
+				c := lowerContent[imgStart+srcStart+i]
+				if c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '>' || c == '/' {
+					srcEnd = i
+					break
+				}
+			}
+			if srcEnd == -1 {
+				srcEnd = len(lowerContent[imgStart+srcStart:])
+			}
+		}
+	}
+
+	imgSrc := htmlContent[imgStart+srcStart : imgStart+srcStart+srcEnd]
+	return strings.TrimSpace(imgSrc)
+}
+
+func extractCover(epubFilePath string) ([]byte, string) {
+	zipReader, err := zip.OpenReader(epubFilePath)
+	if err != nil {
+		return nil, ""
+	}
+	defer zipReader.Close()
+
+	var opfContent []byte
+	var opfDir string
+	fileMap := make(map[string]*zip.File)
+	var firstImage *zip.File
+
+	for _, f := range zipReader.File {
+		if f.FileInfo().IsDir() {
+			continue
+		}
+
+		fileMap[f.Name] = f
+
+		lowerName := strings.ToLower(f.Name)
+
+		if firstImage == nil {
+			if strings.HasSuffix(lowerName, ".jpg") || strings.HasSuffix(lowerName, ".jpeg") ||
+				strings.HasSuffix(lowerName, ".png") || strings.HasSuffix(lowerName, ".gif") ||
+				strings.HasSuffix(lowerName, ".webp") || strings.HasSuffix(lowerName, ".svg") {
+				firstImage = f
+			}
+		}
+
+		if opfContent == nil && strings.HasSuffix(lowerName, ".opf") {
+			rc, err := f.Open()
+			if err == nil {
+				opfContent, _ = io.ReadAll(rc)
+				rc.Close()
+
+				idx := strings.LastIndex(f.Name, "/")
+				if idx >= 0 {
+					opfDir = f.Name[:idx] + "/"
+				}
+			}
+		}
+	}
+
+	coverPatterns := []string{
+		"cover.png", "cover.jpg", "cover.jpeg", "cover.svg",
+		"cover-art.png", "cover-art.jpg", "cover-art.jpeg", "cover-art.svg",
+		"cover-image.png", "cover-image.jpg", "cover-image.jpeg", "cover-image.svg",
+		"frontcover.png", "frontcover.jpg", "frontcover.jpeg", "frontcover.svg",
+		"front-cover.png", "front-cover.jpg", "front-cover.jpeg", "front-cover.svg",
+		"titlepage.png", "titlepage.jpg", "titlepage.jpeg", "titlepage.svg",
+		"title-page.png", "title-page.jpg", "title-page.jpeg", "title-page.svg",
+		"title.png", "title.jpg", "title.jpeg", "title.svg",
+		"00_cover.png", "00_cover.jpg", "00_cover.jpeg", "00_cover.svg",
+		"cover01.png", "cover01.jpg", "cover01.jpeg", "cover01.svg",
+		"cover-01.png", "cover-01.jpg", "cover-01.jpeg", "cover-01.svg",
+		"bkcover.png", "bkcover.jpg", "bkcover.jpeg", "bkcover.svg",
+		"bookcover.png", "bookcover.jpg", "bookcover.jpeg", "bookcover.svg",
+	}
+
+	for _, pattern := range coverPatterns {
+		lowerPattern := strings.ToLower(pattern)
+		for name, f := range fileMap {
+			lowerName := strings.ToLower(name)
+			baseName := filepath.Base(lowerName)
+			if baseName == lowerPattern {
+				rc, err := f.Open()
+				if err == nil {
+					data, _ := io.ReadAll(rc)
+					rc.Close()
+					if len(data) > 0 {
+						return data, name
+					}
+				}
+			}
+		}
+	}
+
+	if opfContent != nil {
+		type OPF struct {
+			XMLName  xml.Name `xml:"package"`
+			Metadata struct {
+				Meta []struct {
+					Name    string `xml:"name,attr"`
+					Content string `xml:"content,attr"`
+				} `xml:"meta"`
+			} `xml:"metadata"`
+			Guide struct {
+				References []struct {
+					Type string `xml:"type,attr"`
+					Href string `xml:"href,attr"`
+				} `xml:"reference"`
+			} `xml:"guide"`
+			Manifest struct {
+				Items []struct {
+					ID         string `xml:"id,attr"`
+					Href       string `xml:"href,attr"`
+					MediaType  string `xml:"media-type,attr"`
+					Properties string `xml:"properties,attr"`
+				} `xml:"item"`
+			} `xml:"manifest"`
+		}
+
+		var opf OPF
+		if err := xml.Unmarshal(opfContent, &opf); err == nil {
+			for _, ref := range opf.Guide.References {
+				if strings.EqualFold(ref.Type, "cover") {
+					coverPath := opfDir + ref.Href
+					if f := findFileInMap(fileMap, coverPath); f != nil {
+						lowerHref := strings.ToLower(ref.Href)
+						isHtml := strings.HasSuffix(lowerHref, ".html") ||
+							strings.HasSuffix(lowerHref, ".xhtml") ||
+							strings.HasSuffix(lowerHref, ".htm")
+
+						if isHtml {
+							rc, err := f.Open()
+							if err == nil {
+								content, _ := io.ReadAll(rc)
+								rc.Close()
+								imgSrc := extractFirstImageSrc(string(content))
+								if imgSrc != "" {
+									if strings.HasPrefix(imgSrc, "/") {
+										imgSrc = imgSrc[1:]
+									}
+									if !strings.HasPrefix(imgSrc, "http://") && !strings.HasPrefix(imgSrc, "https://") {
+										imgDir := ""
+										lastSlash := strings.LastIndex(coverPath, "/")
+										if lastSlash >= 0 {
+											imgDir = coverPath[:lastSlash+1]
+										}
+										if !strings.Contains(imgSrc, "/") {
+											imgSrc = imgDir + imgSrc
+										}
+										if imgFile := findFileInMap(fileMap, imgSrc); imgFile != nil {
+											rc, err := imgFile.Open()
+											if err == nil {
+												data, _ := io.ReadAll(rc)
+												rc.Close()
+												if len(data) > 0 {
+													return data, imgFile.Name
+												}
+											}
+										}
+									}
+								}
+							}
+						} else {
+							rc, err := f.Open()
+							if err == nil {
+								data, _ := io.ReadAll(rc)
+								rc.Close()
+								if len(data) > 0 {
+									return data, f.Name
+								}
+							}
+						}
+					}
+				}
+			}
+
+			var coverID string
+			for _, meta := range opf.Metadata.Meta {
+				if strings.EqualFold(meta.Name, "cover") {
+					coverID = meta.Content
+					break
+				}
+			}
+
+			if coverID != "" {
+				for _, item := range opf.Manifest.Items {
+					if item.ID == coverID {
+						lowerHref := strings.ToLower(item.Href)
+						isHtml := strings.HasSuffix(lowerHref, ".html") ||
+							strings.HasSuffix(lowerHref, ".xhtml") ||
+							strings.HasSuffix(lowerHref, ".htm")
+
+						coverPath := opfDir + item.Href
+						if f := findFileInMap(fileMap, coverPath); f != nil {
+							if isHtml {
+								rc, err := f.Open()
+								if err == nil {
+									content, _ := io.ReadAll(rc)
+									rc.Close()
+									imgSrc := extractFirstImageSrc(string(content))
+									if imgSrc != "" {
+										if strings.HasPrefix(imgSrc, "/") {
+											imgSrc = imgSrc[1:]
+										}
+										if !strings.HasPrefix(imgSrc, "http://") && !strings.HasPrefix(imgSrc, "https://") {
+											imgDir := ""
+											lastSlash := strings.LastIndex(coverPath, "/")
+											if lastSlash >= 0 {
+												imgDir = coverPath[:lastSlash+1]
+											}
+											if !strings.Contains(imgSrc, "/") {
+												imgSrc = imgDir + imgSrc
+											}
+											if imgFile := findFileInMap(fileMap, imgSrc); imgFile != nil {
+												rc, err := imgFile.Open()
+												if err == nil {
+													data, _ := io.ReadAll(rc)
+													rc.Close()
+													if len(data) > 0 {
+														return data, imgFile.Name
+													}
+												}
+											}
+										}
+									}
+								}
+							} else if strings.HasPrefix(item.MediaType, "image/") {
+								rc, err := f.Open()
+								if err == nil {
+									data, _ := io.ReadAll(rc)
+									rc.Close()
+									if len(data) > 0 {
+										return data, f.Name
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+
+			for _, item := range opf.Manifest.Items {
+				if strings.HasPrefix(item.MediaType, "image/") &&
+					strings.Contains(strings.ToLower(item.Properties), "cover-image") {
+					coverPath := opfDir + item.Href
+					if f := findFileInMap(fileMap, coverPath); f != nil {
+						rc, err := f.Open()
+						if err == nil {
+							data, _ := io.ReadAll(rc)
+							rc.Close()
+							if len(data) > 0 {
+								return data, f.Name
+							}
+						}
+					}
+				}
+			}
+
+			for _, item := range opf.Manifest.Items {
+				lowerID := strings.ToLower(item.ID)
+				if strings.HasPrefix(item.MediaType, "image/") &&
+					(strings.Contains(lowerID, "cover") || strings.Contains(lowerID, "front") ||
+						strings.Contains(lowerID, "title") || strings.Contains(lowerID, "thumbnail")) {
+					coverPath := opfDir + item.Href
+					if f := findFileInMap(fileMap, coverPath); f != nil {
+						rc, err := f.Open()
+						if err == nil {
+							data, _ := io.ReadAll(rc)
+							rc.Close()
+							if len(data) > 0 {
+								return data, f.Name
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	if firstImage != nil {
+		rc, err := firstImage.Open()
+		if err == nil {
+			data, _ := io.ReadAll(rc)
+			rc.Close()
+			if len(data) > 0 {
+				return data, firstImage.Name
+			}
+		}
+	}
+
+	return nil, ""
+}
+
+func findFileInMap(fileMap map[string]*zip.File, coverPath string) *zip.File {
+	coverPath = strings.TrimPrefix(coverPath, "/")
+
+	if decodedPath, err := url.QueryUnescape(coverPath); err == nil {
+		coverPath = decodedPath
+	}
+
+	if f, ok := fileMap[coverPath]; ok {
+		return f
+	}
+
+	for name, f := range fileMap {
+		name = strings.TrimPrefix(name, "/")
+		if name == coverPath || strings.HasSuffix(name, "/"+coverPath) {
+			return f
+		}
+
+		lowerName := strings.ToLower(name)
+		lowerPath := strings.ToLower(coverPath)
+		if lowerName == lowerPath || strings.HasSuffix(lowerName, "/"+lowerPath) {
+			return f
+		}
+	}
+
+	return nil
+}
+
+func getCoverFileName(coverInternalPath string) string {
+	lowerPath := strings.ToLower(coverInternalPath)
+	if strings.HasSuffix(lowerPath, ".jpg") || strings.HasSuffix(lowerPath, ".jpeg") {
+		return "cover.jpg"
+	}
+	if strings.HasSuffix(lowerPath, ".png") {
+		return "cover.png"
+	}
+	if strings.HasSuffix(lowerPath, ".gif") {
+		return "cover.gif"
+	}
+	if strings.HasSuffix(lowerPath, ".webp") {
+		return "cover.webp"
+	}
+	if strings.HasSuffix(lowerPath, ".svg") {
+		return "cover.svg"
+	}
+	return "cover.png"
 }
 
 // ProcessAndImportEpub 整合 EPUB 文件的读取、MD5 计算、元数据提取和文件保存
@@ -226,7 +572,7 @@ func ProcessAndImportEpub(filePath, shelfName, booksDir string) ImportResult {
 	// 6. 保存封面
 	var coverURL string
 	if coverData != nil && len(coverData) > 0 {
-		coverFileName := "cover.png" // 统一保存为 png
+		coverFileName := getCoverFileName(coverInternalPath)
 		_, err := SaveFile(bookDestDir, coverFileName, coverData)
 		if err != nil {
 			fmt.Printf("Failed to save cover file: %v\n", err)
@@ -236,13 +582,19 @@ func ProcessAndImportEpub(filePath, shelfName, booksDir string) ImportResult {
 		}
 	}
 
-	// 7. 复制书籍本体
-	bookFilePath, err := CopyFile(filePath, bookDestDir, originalFileName)
-	if err != nil {
-		result.Error = fmt.Sprintf("Failed to copy book file: %v", err)
-		return result
+	// 7. 复制书籍本体（先检查是否已存在）
+	targetBookPath := filepath.Join(bookDestDir, originalFileName)
+	if _, err := os.Stat(targetBookPath); err == nil {
+		fmt.Printf("书籍文件已存在，跳过复制: %s\n", targetBookPath)
+		result.FilePath = targetBookPath
+	} else {
+		bookFilePath, err := CopyFile(filePath, bookDestDir, originalFileName)
+		if err != nil {
+			result.Error = fmt.Sprintf("Failed to copy book file: %v", err)
+			return result
+		}
+		result.FilePath = bookFilePath
 	}
-	result.FilePath = bookFilePath
 
 	// 8. 创建配置文件
 	config := BookConfig{

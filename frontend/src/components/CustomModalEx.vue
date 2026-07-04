@@ -40,7 +40,7 @@ const props = withDefaults(defineProps<{
   showCancel: true,
   showFooter: true,
   confirmDisabled: false,
-  maxWidth: '420px'
+  maxWidth: '600px'
 })
 
 const emit = defineEmits<{
@@ -66,6 +66,17 @@ watch(() => props.visible, (val) => {
   if (val) {
     savedOverflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
+    
+    setTimeout(() => {
+      const modal = document.querySelector('.modal-overlay')
+      if (modal) {
+        const input = modal.querySelector('input, textarea') as HTMLInputElement
+        if (input) {
+          input.focus()
+          input.select()
+        }
+      }
+    }, 50)
   } else {
     document.body.style.overflow = savedOverflow
   }
@@ -151,11 +162,10 @@ onBeforeUnmount(() => {
 
 /* 分组列表 */
 .group-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  /* 固定滚动条空间，避免出现/消失导致抖动 */
-  max-height: 200px;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  max-height: 300px;
   overflow-y: auto;
   scrollbar-gutter: stable;
 }
@@ -177,20 +187,22 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 12px;
+  padding: 12px 14px;
   border-radius: 8px;
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
-  flex-shrink: 0;
+  transition: all 0.15s ease;
+  border: 1px solid var(--border-color, #dcdfe6);
+  background: var(--bg-color, #fff);
 }
 
 .group-option:hover {
   background: var(--primary-light, rgba(74, 144, 217, 0.08));
+  border-color: var(--primary-color, #4A90D9);
 }
 
 .group-option.active {
-  background: var(--primary-color, #4A90D9);
-  color: #fff;
+  border-color: var(--primary-color, #4A90D9);
+  background: rgba(79, 70, 229, 0.1);
 }
 
 .group-option .group-name {
@@ -213,7 +225,7 @@ onBeforeUnmount(() => {
   justify-content: center;
   gap: 8px;
   margin-top: 12px;
-  padding: 10px 16px;
+  padding: 12px 14px;
   border: 1px dashed var(--border-color, #dcdfe6);
   border-radius: 8px;
   cursor: pointer;
@@ -222,6 +234,7 @@ onBeforeUnmount(() => {
   font-weight: 500;
   transition: all 0.15s ease;
   user-select: none;
+  grid-column: span 2;
 }
 
 .group-add-row:hover {

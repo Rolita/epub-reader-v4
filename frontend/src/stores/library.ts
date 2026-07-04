@@ -15,6 +15,7 @@ export interface Book {
   coverUrl?: string
   md5?: string
   filePath?: string
+  order: number
 }
 
 export interface Group {
@@ -22,6 +23,7 @@ export interface Group {
   shelfId: string
   name: string
   coverUrl?: string
+  order: number
 }
 
 export const useLibraryStore = defineStore('library', () => {
@@ -198,8 +200,24 @@ export const useLibraryStore = defineStore('library', () => {
     try {
       const dataStr = await loadShelfData(shelfName)
       const data = JSON.parse(dataStr)
-      currentBooks.value = data.books || []
-      currentGroups.value = data.groups || []
+      
+      let books = data.books || []
+      books.forEach((b: any, index: number) => {
+        if (b.order === undefined) {
+          b.order = index
+        }
+      })
+      books.sort((a: any, b: any) => a.order - b.order)
+      currentBooks.value = books
+      
+      let groups = data.groups || []
+      groups.forEach((g: any, index: number) => {
+        if (g.order === undefined) {
+          g.order = index
+        }
+      })
+      groups.sort((a: any, b: any) => a.order - b.order)
+      currentGroups.value = groups
     } catch (e) {
       console.error('加载书架书籍失败', e)
       currentBooks.value = []
@@ -250,7 +268,8 @@ export const useLibraryStore = defineStore('library', () => {
       author,
       coverUrl,
       md5,
-      filePath
+      filePath,
+      order: currentBooks.value.length
     }
     
     currentBooks.value.push(newBook)
@@ -273,7 +292,8 @@ export const useLibraryStore = defineStore('library', () => {
       id: Date.now().toString(),
       shelfId: activeShelfId.value,
       name,
-      coverUrl
+      coverUrl,
+      order: currentGroups.value.length
     }
     
     currentGroups.value.push(newGroup)
@@ -294,10 +314,60 @@ export const useLibraryStore = defineStore('library', () => {
     // 删除分组
     currentGroups.value = currentGroups.value.filter(g => g.id !== groupId)
     
+    // 重新计算 order 值
+    currentGroups.value.forEach((g, index) => {
+      g.order = index
+    })
+    
     // 如果删除的是当前激活的分组，清空激活状态
     if (activeGroupId.value === groupId) {
       activeGroupId.value = null
     }
+    
+    await saveShelfDataFull()
+  }
+  
+  // 重新排序分组
+  async function reorderGroup(fromIndex: number, toIndex: number) {
+    if (fromIndex === toIndex) return
+    
+    const groups = currentGroups.value
+    
+    const [removed] = groups.splice(fromIndex, 1)
+    groups.splice(toIndex, 0, removed)
+    
+    groups.forEach((g, index) => {
+      g.order = index
+    })
+    
+    await saveShelfDataFull()
+  }
+  
+  // 重新排序书籍（在同一分组内或根级别）
+  async function reorderBook(fromIndex: number, toIndex: number, groupId?: string) {
+    if (fromIndex === toIndex) return
+    
+    const books = currentBooks.value.filter(b => b.groupId === groupId)
+    
+    if (books.length <= 1) return
+    
+    const allBooks = currentBooks.value
+    
+    const fromBook = books[fromIndex]
+    const toBook = books[toIndex]
+    
+    const fromBookIndex = allBooks.findIndex(b => b.id === fromBook.id)
+    const toBookIndex = allBooks.findIndex(b => b.id === toBook.id)
+    
+    if (fromBookIndex === -1 || toBookIndex === -1) return
+    
+    const [removed] = allBooks.splice(fromBookIndex, 1)
+    allBooks.splice(toBookIndex, 0, removed)
+    
+    const targetBooks = allBooks.filter(b => b.groupId === groupId)
+    targetBooks.forEach((b, index) => {
+      b.order = index
+    })
     
     await saveShelfDataFull()
   }
@@ -406,12 +476,15 @@ export const useLibraryStore = defineStore('library', () => {
     deleteBook,
     updateBookTitle,
     moveBookToFront,
+    reorderBook,
     loadShelfBooks,
+    saveBooks,
     
     // 分组操作
     createGroup,
     deleteGroup,
     renameGroup,
+    reorderGroup,
     setActiveGroup,
     addBookToGroup,
     removeBookFromGroup

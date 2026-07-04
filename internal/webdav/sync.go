@@ -31,6 +31,17 @@ func (c *ClientWrapper) DeleteRemote(remotePath string) error {
 	return err
 }
 
+// Rename 在 WebDAV 上重命名文件或文件夹
+func (c *ClientWrapper) Rename(oldPath, newPath string) error {
+	err := c.client.Rename(oldPath, newPath, false)
+	if err != nil {
+		GlobalLogger.Add("重命名: "+oldPath+" -> "+newPath, "失败: "+err.Error(), "ERROR")
+	} else {
+		GlobalLogger.Add("重命名: "+oldPath+" -> "+newPath, "成功", "SUCCESS")
+	}
+	return err
+}
+
 // DeleteRemoteBook 删除远程书籍文件
 func (c *ClientWrapper) DeleteRemoteBook(shelfName, bookID string) error {
 	remotePath := "books/" + shelfName + "/" + bookID + ".epub"
@@ -160,45 +171,27 @@ func (c *ClientWrapper) RestoreBackupFile(remotePath string) error {
 
 // UploadDir 递归上传本地文件夹（带时间戳智能过滤）
 func (c *ClientWrapper) UploadDir(localDir, remoteDir string) error {
+	remoteDirCache := make(map[string][]os.FileInfo)
+
 	return filepath.Walk(localDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
 
-		// 计算相对于 localDir 的相对路径
 		relPath, _ := filepath.Rel(localDir, path)
 		if relPath == "." {
-			return nil // 跳过根目录本身
+			return nil
 		}
 
-		// 将 Windows 的反斜杠转为 WebDAV 的正斜杠
 		remotePath := strings.ReplaceAll(filepath.Join(remoteDir, relPath), "\\", "/")
 
 		if info.IsDir() {
-			// 在 WebDAV 上创建对应的目录
 			return c.client.MkdirAll(remotePath, 0755)
 		} else {
-			// --- 【修正版】检查远程文件信息 ---
-			remoteInfo, err := c.client.Stat(remotePath)
-
-			// 如果 err != nil，说明 Stat 失败（通常是 404），必须上传！
-			if err != nil {
-				fmt.Printf("远程不存在该文件，准备上传: %s\n", relPath)
-			} else {
-				// 检查远程时间戳是否为零值（某些服务器对不存在的文件返回零值而非错误）
-				if remoteInfo.ModTime().Unix() == 0 {
-					fmt.Printf("远程文件时间戳为零值，准备上传: %s\n", relPath)
-				} else {
-					// 如果没有 err，再进行时间戳对比
-					if info.ModTime().Before(remoteInfo.ModTime().Add(2 * time.Second)) {
-						fmt.Printf("跳过文件 (时间戳判断无需上传): %s (本地:%d, 远程:%d)\n", relPath, info.ModTime().Unix(), remoteInfo.ModTime().Unix())
-						GlobalLogger.Add("上传文件: "+remotePath, "文件未变，已跳过", "SKIP")
-						return nil
-					}
-				}
+			if !c.shouldUploadFile(info, relPath, remotePath, remoteDirCache) {
+				return nil
 			}
 
-			// 执行上传
 			file, err := os.Open(path)
 			if err != nil {
 				return err
@@ -210,15 +203,84 @@ func (c *ClientWrapper) UploadDir(localDir, remoteDir string) error {
 	})
 }
 
-// DownloadDir 递归下载远程文件夹到本地
-func (c *ClientWrapper) DownloadDir(remoteDir, localDir string) error {
-	// 获取远程目录列表
-	files, err := c.client.ReadDir(remoteDir)
-	if err != nil {
-		return err
+func (c *ClientWrapper) shouldUploadFile(info os.FileInfo, relPath, remotePath string, remoteDirCache map[string][]os.FileInfo) bool {
+	remoteParentDir := filepath.Dir(remotePath)
+	remoteParentDir = strings.ReplaceAll(remoteParentDir, "\\", "/")
+
+	var remoteFiles []os.FileInfo
+	if cached, ok := remoteDirCache[remoteParentDir]; ok {
+		remoteFiles = cached
+	} else {
+		var err error
+		remoteFiles, err = c.client.ReadDir(remoteParentDir)
+		if err != nil {
+			fmt.Printf("远程父目录不存在，准备上传: %s\n", relPath)
+			return true
+		}
+		remoteDirCache[remoteParentDir] = remoteFiles
 	}
 
-	// 确保本地目录存在
+	var remoteModTime time.Time
+	fileExists := false
+	for _, f := range remoteFiles {
+		if f.Name() == filepath.Base(relPath) {
+			fileExists = true
+			remoteModTime = f.ModTime()
+			break
+		}
+	}
+
+	if !fileExists {
+		fmt.Printf("远程不存在该文件，准备上传: %s\n", relPath)
+		return true
+	}
+
+	if remoteModTime.Unix() == 0 {
+		fmt.Printf("远程文件时间戳无效，准备上传: %s\n", relPath)
+		return true
+	}
+
+	localTime := info.ModTime()
+
+	if localTime.Unix() == 0 {
+		fmt.Printf("本地时间戳无效(0)，准备上传: %s\n", relPath)
+		return true
+	}
+
+	if localTime.Unix() == remoteModTime.Unix() {
+		fmt.Printf("跳过文件 (时间戳相同): %s\n", relPath)
+		GlobalLogger.Add("上传文件: "+remotePath, "时间戳相同，已跳过", "SKIP")
+		return false
+	}
+
+	if localTime.Before(remoteModTime) {
+		fmt.Printf("跳过文件 (云端更新): %s\n", relPath)
+		GlobalLogger.Add("上传文件: "+remotePath, "云端更新，已跳过", "SKIP")
+		return false
+	}
+
+	fmt.Printf("本地更新，准备上传: %s\n", relPath)
+	return true
+}
+
+// DownloadDir 递归下载远程文件夹到本地（带时间戳智能过滤）
+func (c *ClientWrapper) DownloadDir(remoteDir, localDir string) error {
+	return c.downloadDirWithCache(remoteDir, localDir, make(map[string][]os.FileInfo))
+}
+
+func (c *ClientWrapper) downloadDirWithCache(remoteDir, localDir string, remoteDirCache map[string][]os.FileInfo) error {
+	var files []os.FileInfo
+	if cached, ok := remoteDirCache[remoteDir]; ok {
+		files = cached
+	} else {
+		var err error
+		files, err = c.client.ReadDir(remoteDir)
+		if err != nil {
+			return err
+		}
+		remoteDirCache[remoteDir] = files
+	}
+
 	if err := os.MkdirAll(localDir, 0755); err != nil {
 		return err
 	}
@@ -228,19 +290,60 @@ func (c *ClientWrapper) DownloadDir(remoteDir, localDir string) error {
 		localPath := filepath.Join(localDir, file.Name())
 
 		if file.IsDir() {
-			// 递归下载子目录
-			if err := c.DownloadDir(remotePath, localPath); err != nil {
+			if err := c.downloadDirWithCache(remotePath, localPath, remoteDirCache); err != nil {
 				return err
 			}
 		} else {
-			// 下载文件
+			if !c.shouldDownloadFile(file, localPath) {
+				continue
+			}
+
 			if err := c.DownloadFile(remotePath, localPath); err != nil {
-				return err
+				fmt.Printf("下载失败 [%s]: %v\n", file.Name(), err)
 			}
 		}
 	}
 
 	return nil
+}
+
+func (c *ClientWrapper) shouldDownloadFile(remoteInfo os.FileInfo, localPath string) bool {
+	localInfo, err := os.Stat(localPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			fmt.Printf("本地不存在，准备下载: %s\n", remoteInfo.Name())
+			return true
+		}
+		fmt.Printf("获取本地文件信息失败，准备下载: %s\n", remoteInfo.Name())
+		return true
+	}
+
+	remoteModTime := remoteInfo.ModTime()
+	if remoteModTime.Unix() == 0 {
+		fmt.Printf("远程时间戳无效，准备下载: %s\n", remoteInfo.Name())
+		return true
+	}
+
+	localModTime := localInfo.ModTime()
+	if localModTime.Unix() == 0 {
+		fmt.Printf("本地时间戳无效，准备下载: %s\n", remoteInfo.Name())
+		return true
+	}
+
+	if localModTime.Unix() == remoteModTime.Unix() {
+		fmt.Printf("跳过文件 (时间戳相同): %s\n", remoteInfo.Name())
+		GlobalLogger.Add("下载文件: "+localPath, "时间戳相同，已跳过", "SKIP")
+		return false
+	}
+
+	if localModTime.After(remoteModTime) {
+		fmt.Printf("跳过文件 (本地更新): %s\n", remoteInfo.Name())
+		GlobalLogger.Add("下载文件: "+localPath, "本地更新，已跳过", "SKIP")
+		return false
+	}
+
+	fmt.Printf("远程更新，准备下载: %s\n", remoteInfo.Name())
+	return true
 }
 
 // DownloadDirExcluding 递归下载目录，跳过指定后缀的文件
@@ -405,7 +508,8 @@ func (c *ClientWrapper) SmartUploadLibrary(localLibPath, remotePath string) (boo
 	}
 
 	// 3. 核心对比逻辑：如果本地时间戳不大于远程，则跳过
-	if localLib.Metadata.LastSynced <= remoteLib.Metadata.LastSynced {
+	// 但如果时间戳都为 0，表示从未同步过，应该执行上传
+	if localLib.Metadata.LastSynced <= remoteLib.Metadata.LastSynced && remoteLib.Metadata.LastSynced != 0 {
 		fmt.Printf("无需同步：本地时间戳(%d) <= 远程时间戳(%d)\n", localLib.Metadata.LastSynced, remoteLib.Metadata.LastSynced)
 		return false, nil
 	}

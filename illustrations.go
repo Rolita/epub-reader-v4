@@ -15,13 +15,13 @@ var (
 	tabEpubPathMutex sync.RWMutex
 
 	// EPUB 文件缓存
-	epubCache   = make(map[string]*epubCacheEntry)
+	epubCache      = make(map[string]*epubCacheEntry)
 	epubCacheMutex sync.RWMutex
 )
 
 type epubCacheEntry struct {
-	reader *zip.ReadCloser
-	pathMap map[string]*zip.File
+	reader   *zip.ReadCloser
+	pathMap  map[string]*zip.File
 	lastUsed time.Time
 }
 
@@ -31,22 +31,34 @@ func (a *App) RegisterEpubTab(tabId, epubPath string) error {
 	defer tabEpubPathMutex.Unlock()
 
 	tabEpubPathMap[tabId] = epubPath
-	
+
 	// 预先加载并缓存 EPUB 文件
 	_, err := getOrOpenEpub(epubPath)
 	if err != nil {
 		return fmt.Errorf("缓存 EPUB 文件失败: %w", err)
 	}
-	
+
 	return nil
 }
 
-// UnregisterEpubTab 注销 tabId 和 EPUB 文件路径的映射
+// UnregisterEpubTab 注销 tabId 和 EPUB 文件路径的映射，并关闭相关的文件句柄
 func (a *App) UnregisterEpubTab(tabId string) {
 	tabEpubPathMutex.Lock()
-	defer tabEpubPathMutex.Unlock()
-
+	epubPath, exists := tabEpubPathMap[tabId]
 	delete(tabEpubPathMap, tabId)
+	tabEpubPathMutex.Unlock()
+
+	if exists {
+		epubCacheMutex.Lock()
+		if entry, ok := epubCache[epubPath]; ok {
+			if entry.reader != nil {
+				entry.reader.Close()
+			}
+			delete(epubCache, epubPath)
+			fmt.Printf("EPUB 文件已关闭: %s\n", epubPath)
+		}
+		epubCacheMutex.Unlock()
+	}
 }
 
 // GetEpubPathByTabId 根据 tabId 获取 EPUB 文件路径

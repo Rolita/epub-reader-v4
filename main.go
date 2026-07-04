@@ -3,16 +3,115 @@ package main
 import (
 	"embed"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"syscall"
+	"time"
+	"unsafe"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	"github.com/wailsapp/wails/v2/pkg/options/windows"
 )
+
+var (
+	user32              = syscall.NewLazyDLL("user32.dll")
+	findWindow          = user32.NewProc("FindWindowW")
+	setForegroundWindow = user32.NewProc("SetForegroundWindow")
+	showWindow          = user32.NewProc("ShowWindow")
+
+	kernel32            = syscall.NewLazyDLL("kernel32.dll")
+	createMutexW        = kernel32.NewProc("CreateMutexW")
+	waitForSingleObject = kernel32.NewProc("WaitForSingleObject")
+	closeHandle         = kernel32.NewProc("CloseHandle")
+)
+
+const (
+	SW_RESTORE     = 9
+	SW_SHOW        = 5
+	WAIT_ABANDONED = 0x00000080
+	WAIT_OBJECT_0  = 0x00000000
+	WAIT_TIMEOUT   = 0x00000102
+)
+
+func activateExistingInstance() bool {
+	className, _ := syscall.UTF16PtrFromString("wails_application")
+	title, _ := syscall.UTF16PtrFromString("EPUB Reader")
+
+	hwnd, _, _ := findWindow.Call(uintptr(unsafe.Pointer(className)), 0)
+	if hwnd == 0 {
+		log.Println("Trying to find window by title")
+		hwnd, _, _ = findWindow.Call(0, uintptr(unsafe.Pointer(title)))
+	}
+	if hwnd == 0 {
+		log.Println("Cannot find existing window")
+		return false
+	}
+
+	log.Printf("Found window handle: %d\n", hwnd)
+	showWindow.Call(hwnd, SW_RESTORE)
+	setForegroundWindow.Call(hwnd)
+	return true
+}
+
+var instanceMutex sync.Mutex
+var isFirstInstance bool
+
+func checkSingleInstance() bool {
+	instanceMutex.Lock()
+	defer instanceMutex.Unlock()
+
+	if isFirstInstance {
+		log.Println("isFirstInstance is true, returning true")
+		return true
+	}
+
+	mutexName, _ := syscall.UTF16PtrFromString("EPUBReaderInstanceMutex")
+	mutexHandle, _, _ := createMutexW.Call(0, 0, uintptr(unsafe.Pointer(mutexName)))
+	if mutexHandle == 0 {
+		log.Println("createMutexW failed")
+		return false
+	}
+
+	result, _, _ := waitForSingleObject.Call(mutexHandle, 0)
+	log.Printf("waitForSingleObject result: %d\n", result)
+
+	if result == WAIT_OBJECT_0 {
+		log.Println("Got mutex, first instance")
+		isFirstInstance = true
+		go func() {
+			for {
+				time.Sleep(time.Second)
+			}
+		}()
+		return false
+	}
+
+	log.Println("Mutex already held, existing instance")
+	closeHandle.Call(mutexHandle)
+	return true
+}
+
+func sendEpubPathToExistingInstance(epubPath string) {
+	time.Sleep(300 * time.Millisecond)
+	log.Printf("Writing EPUB path to temp file: %s\n", epubPath)
+
+	tempDir := os.TempDir()
+	ipcFile := filepath.Join(tempDir, "epub-reader-ipc.txt")
+
+	err := os.WriteFile(ipcFile, []byte(epubPath), 0644)
+	if err != nil {
+		log.Printf("Failed to write IPC file: %v\n", err)
+		return
+	}
+
+	log.Println("EPUB path written to IPC file")
+}
 
 //go:embed all:frontend/dist
 var assets embed.FS
@@ -21,17 +120,14 @@ var assets embed.FS
 type FileAssetHandler struct{}
 
 func (f *FileAssetHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// 获取配置目录路径
 	configDir, err := os.UserConfigDir()
 	if err != nil {
 		http.Error(w, "无法获取配置目录", http.StatusInternalServerError)
 		return
 	}
 
-	// 构建实际物理路径: AppData/my-epub-reader/books/...
 	actualPath := filepath.Join(configDir, "my-epub-reader", strings.TrimPrefix(r.URL.Path, "/"))
 
-	// 使用 http.ServeFile 提供文件服务
 	http.ServeFile(w, r, actualPath)
 }
 
@@ -74,36 +170,64 @@ type LocalFileHandler struct{}
 
 func (h *LocalFileHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/local-file/")
-	
-	// 解码路径（处理特殊字符）
+
 	path = strings.ReplaceAll(path, "%20", " ")
 	path = strings.ReplaceAll(path, "%2F", "/")
-	
-	// 安全检查：确保路径存在
+
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		http.Error(w, "文件不存在", http.StatusNotFound)
 		return
 	}
-	
-	// 设置适当的响应头
+
 	w.Header().Set("Content-Type", "application/epub+zip")
 	w.Header().Set("Cache-Control", "no-cache")
-	
-	// 提供文件服务
+
 	http.ServeFile(w, r, path)
 }
 
 func main() {
+	logFile, err := os.Create(filepath.Join(os.TempDir(), "epub-reader-debug.log"))
+	if err != nil {
+		fmt.Println("Failed to create log file:", err)
+	}
+	log.SetOutput(logFile)
+	log.SetFlags(log.LstdFlags | log.Lshortfile)
+
+	log.Println("===== EPUB Reader Starting =====")
+	log.Printf("Args: %v\n", os.Args)
+
+	if checkSingleInstance() {
+		log.Println("Found existing instance")
+		if len(os.Args) > 1 {
+			epubPath := os.Args[1]
+			log.Printf("Sending EPUB path: %s\n", epubPath)
+			sendEpubPathToExistingInstance(epubPath)
+		}
+		activateExistingInstance()
+		log.Println("Exiting secondary instance")
+		return
+	}
+
+	log.Println("First instance, starting app")
+
+	var epubPath string
+	if len(os.Args) > 1 {
+		epubPath = os.Args[1]
+	}
+
 	app := NewApp()
+	if epubPath != "" {
+		app.pendingEpubPath = epubPath
+	}
 
 	assetsHandler := &FileAssetHandler{}
 	epubImageHandler := &EpubImageHandler{app: app}
 	localFileHandler := &LocalFileHandler{}
 
-	err := wails.Run(&options.App{
+	runErr := wails.Run(&options.App{
 		Title:     "EPUB Reader",
-		Width:     1314,
-		Height:    843,
+		Width:     1920,
+		Height:    1080,
 		Frameless: true,
 		AssetServer: &assetserver.Options{
 			Assets: assets,
@@ -134,7 +258,7 @@ func main() {
 		},
 	})
 
-	if err != nil {
-		panic(err)
+	if runErr != nil {
+		panic(runErr)
 	}
 }

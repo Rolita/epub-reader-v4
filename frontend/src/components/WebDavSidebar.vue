@@ -2,6 +2,8 @@
 import { ref, watch } from 'vue';
 import { useLibraryStore } from '../stores/library';
 import CloudIcon from './icons/CloudIcon.vue';
+import UploadIcon from './icons/UploadIcon.vue';
+import DownloadIcon from './icons/DownloadIcon.vue';
 
 const emit = defineEmits<{
   (e: 'switch-view', viewName: string): void
@@ -166,82 +168,82 @@ watch(() => store.activeShelfId, (newId) => {
     </div>
     
     <div class="webdav-content">
-      <!-- 当前书架 -->
-      <div class="current-shelf">
-        <span>当前书架:</span>
-        <span class="shelf-name">{{ currentShelfName || '未选择' }}</span>
+      <div class="section">
+        <label class="form-label">当前书架</label>
+        
+        <div class="current-shelf">
+          <span>{{ currentShelfName || '未选择' }}</span>
+        </div>
       </div>
       
-      <!-- 配置表单 -->
-      <div class="form-group">
-        <label class="form-label">服务器地址 (Base URL)</label>
-        <input 
-          v-model="config.base_url" 
-          type="text" 
-          placeholder="https://dav.example.com/dav/"
-          class="form-input"
-        />
-      
+      <div class="section">
+        <div class="section-title"></div>
+        <div class="form-group">
+          <label class="form-label">服务器地址</label>
+          <input 
+            v-model="config.base_url" 
+            type="text" 
+            placeholder="https://dav.example.com/dav/"
+            class="form-input"
+          />
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">远程路径</label>
+          <input 
+            v-model="config.remote_path" 
+            type="text" 
+            placeholder="bookshelf_backup/my-shelf"
+            class="form-input"
+          />
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">用户名</label>
+          <input 
+            v-model="config.username" 
+            type="text" 
+            placeholder="username"
+            class="form-input"
+          />
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">密码</label>
+          <input 
+            v-model="config.password" 
+            type="password" 
+            placeholder="password"
+            class="form-input"
+          />
+        </div>
+        
+        <div class="actions">
+          <button 
+            class="btn btn-secondary" 
+            @click="saveConfig"
+          >
+            保存配置
+          </button>
+          <button 
+            class="btn btn-primary" 
+            @click="handleTestConnection"
+            :disabled="connecting"
+          >
+            {{ connecting ? '连接中...' : '测试连接' }}
+          </button>
+        </div>
       </div>
       
-      <div class="form-group">
-        <label class="form-label">远程路径 (Remote Path)</label>
-        <input 
-          v-model="config.remote_path" 
-          type="text" 
-          placeholder="bookshelf_backup/my-shelf"
-          class="form-input"
-        />
-  
-      </div>
-      
-      <div class="form-group">
-        <label class="form-label">用户名（User Name）
-        </label>
-        <input 
-          v-model="config.username" 
-          type="text" 
-          placeholder="username"
-          class="form-input"
-        />
-      </div>
-      
-      <div class="form-group">
-        <label class="form-label">密码（Password）</label>
-        <input 
-          v-model="config.password" 
-          type="password" 
-          placeholder="password"
-          class="form-input"
-        />
-      </div>
-      
-      <!-- 操作按钮 -->
-      <div class="actions">
-        <button 
-          class="btn btn-secondary" 
-          @click="saveConfig"
-        >
-          保存配置
-        </button>
-        <button 
-          class="btn btn-primary" 
-          @click="handleTestConnection"
-          :disabled="connecting"
-        >
-          {{ connecting ? '连接中...' : '测试连接' }}
-        </button>
-      </div>
-      
-      <!-- 同步操作 -->
-      <div class="sync-section">
-        <h4>同步操作</h4>
+      <div class="section">
+        <div class="section-title"></div>
         <div class="actions">
           <button 
             class="btn btn-upload" 
             @click="handleUpload"
             :disabled="uploading"
           >
+            <UploadIcon :size="16" />
             {{ uploading ? '上传中...' : '上传' }}
           </button>
           <button 
@@ -249,6 +251,7 @@ watch(() => store.activeShelfId, (newId) => {
             @click="handleDownload"
             :disabled="downloading"
           >
+            <DownloadIcon :size="16" />
             {{ downloading ? '下载中...' : '下载' }}
           </button>
         </div>
@@ -258,7 +261,6 @@ watch(() => store.activeShelfId, (newId) => {
 </template>
 
 <style scoped>
-/* WebDAV容器 */
 .webdav-wrapper {
   width: 100%;
   height: 100%;
@@ -269,7 +271,6 @@ watch(() => store.activeShelfId, (newId) => {
   user-select: none;
 }
 
-/* 侧边栏头部 */
 .sidebar-header {
   padding: 28px 20px;
   border-bottom: 1px solid var(--border-color);
@@ -279,7 +280,6 @@ watch(() => store.activeShelfId, (newId) => {
   background: linear-gradient(180deg, var(--primary-light) 0%, transparent 100%);
 }
 
-/* 返回按钮 */
 .back-btn {
   background: var(--primary-light);
   border: 1px solid transparent;
@@ -307,94 +307,113 @@ watch(() => store.activeShelfId, (newId) => {
   letter-spacing: -0.02em;
 }
 
-/* WebDAV内容区 */
 .webdav-content {
   flex: 1;
-  padding: 24px 20px;
+  padding: 20px;
   overflow-y: auto;
 }
 
-/* 当前书架显示 */
-.current-shelf {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 14px 16px;
-  background: var(--bg-color);
-  border-radius: var(--radius-lg);
-  margin-bottom: 24px;
-  font-size: 0.92rem;
-  border: 1.5px solid var(--border-color);
+.section {
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--border-color);
+  margin-bottom: 20px;
 }
 
-.current-shelf .shelf-name {
+.section:last-child {
+  padding-bottom: 0;
+  border-bottom: none;
+  margin-bottom: 0;
+}
+
+.section-title {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 14px;
+}
+
+.current-shelf {
+  padding: 8.5px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  font-size: 0.9rem;
+  background: var(--sidebar-bg);
+}
+
+.current-shelf span {
   font-weight: 600;
   color: var(--primary-color);
 }
 
-/* 表单组 */
 .form-group {
-  margin-bottom: 10px;
+  margin-bottom: 16px;
 }
 
-/* 表单标签 */
+.form-group:last-child {
+  margin-bottom: 0;
+}
+
 .form-label {
   display: block;
-  font-size: 0.89rem;
+  font-size: 0.85rem;
   color: var(--text-secondary);
-  margin-bottom: 3px;
-  font-weight: 550;
+  margin-bottom: 6px;
+  font-weight: 600;
 }
 
-/* 表单输入框 */
 .form-input {
   width: 100%;
-  padding: 13px 16px;
-  border: 1.5px solid var(--border-color);
-  border-radius: var(--radius-lg);
-  background: var(--bg-color);
-  color: var(--text-primary);
-  font-size: 0.92rem;
+  padding: 10px 14px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--sidebar-bg);
+  color: var(--text-color);
+  font-size: 0.9rem;
   box-sizing: border-box;
   outline: none;
-  transition: all var(--transition-fast);
+  transition: all 0.2s ease;
 }
 
 .form-input:focus {
   border-color: var(--primary-color);
-  box-shadow: 0 0 0 4px var(--primary-light);
+  background: var(--bg-color);
 }
 
 .form-input::placeholder {
   color: var(--text-muted);
+  font-size: 0.85rem;
 }
 
-/* 表单提示 */
 .form-hint {
   display: block;
-  font-size: 0.78rem;
+  font-size: 0.76rem;
   color: var(--text-muted);
-  margin-top: 8px;
+  margin-top: 4px;
 }
 
-/* 操作按钮组 */
 .actions {
   display: flex;
-  gap: 14px;
-  margin-top: 24px;
+  gap: 10px;
+  margin-top: 20px;
 }
 
 .btn {
   flex: 1;
-  padding: 13px;
+  padding: 11px;
   border: none;
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-md);
   cursor: pointer;
-  font-size: 0.92rem;
+  font-size: 0.88rem;
   font-weight: 500;
-  transition: all var(--transition-normal);
+  transition: all 0.2s ease;
   position: relative;
   overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
 }
 
 .btn::before {
@@ -405,7 +424,7 @@ watch(() => store.activeShelfId, (newId) => {
   width: 100%;
   height: 100%;
   background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.2) 50%, transparent 100%);
-  transition: left var(--transition-slow);
+  transition: left 0.4s ease;
 }
 
 .btn:hover::before {
@@ -413,70 +432,49 @@ watch(() => store.activeShelfId, (newId) => {
 }
 
 .btn:disabled {
-  opacity: 0.4;
+  opacity: 0.5;
   cursor: not-allowed;
   transform: none;
 }
 
 .btn-primary {
-  background: linear-gradient(135deg, var(--primary-color) 0%, var(--accent-color) 100%);
+  background: linear-gradient(135deg, var(--accent-color) 0%, var(--primary-color) 100%);
   color: white;
-  box-shadow: var(--shadow-md);
 }
 
 .btn-primary:hover:not(:disabled) {
-  transform: translateY(-2px);
-  box-shadow: var(--shadow-lg);
+  transform: translateY(-1px);
 }
 
 .btn-secondary {
-  background: transparent;
-  color: var(--text-color);
-  border: 1.5px solid var(--border-color);
+  background: linear-gradient(135deg, var(--primary-color) 0%, var(--accent-color) 100%);
+  color: white;
 }
 
-.btn-secondary:hover {
-  background: var(--primary-light);
-  border-color: var(--primary-color);
+.btn-secondary:hover:not(:disabled) {
+  transform: translateY(-1px);
 }
 
-/* 同步操作区 */
-.sync-section {
-  margin-top: 28px;
-  padding-top: 24px;
-  border-top: 1px solid var(--border-color);
-}
 
-.sync-section h4 {
-  margin: 0 0 16px 0;
-  font-size: 0.95rem;
-  font-weight: 600;
-  color: var(--text-secondary);
-}
 
 .btn-upload {
   background: linear-gradient(135deg, var(--primary-color) 0%, var(--accent-color) 100%);
   color: white;
-  box-shadow: var(--shadow-md);
 }
 
 .btn-upload:hover:not(:disabled) {
-  transform: translateY(-2px);
-  box-shadow: var(--shadow-lg);
+  transform: translateY(-1px);
 }
 
 .btn-download {
   background: linear-gradient(135deg, var(--accent-color) 0%, var(--primary-color) 100%);
   color: white;
-  box-shadow: var(--shadow-md);
 }
 
 .btn-download:hover:not(:disabled) {
-  transform: translateY(-2px);
-  box-shadow: var(--shadow-lg);
+  transform: translateY(-1px);
 }
 
-/* 滚动条美化 */
 .webdav-content::-webkit-scrollbar {
   width: 4px;
 }

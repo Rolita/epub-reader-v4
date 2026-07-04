@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"crypto/md5"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -25,10 +28,11 @@ var downloadingBooks = make(map[string]bool)
 var downloadingMu sync.Mutex
 
 type App struct {
-	ctx        context.Context
-	IsSyncing  bool          // 同步状态标志
-	syncLock   chan struct{} // 防抖锁，防止同步风暴
-	importLock chan struct{} // 导入同步专用锁
+	ctx             context.Context
+	IsSyncing       bool          // 同步状态标志
+	syncLock        chan struct{} // 防抖锁，防止同步风暴
+	importLock      chan struct{} // 导入同步专用锁
+	pendingEpubPath string        // 启动时待打开的 EPUB 文件路径
 }
 
 func NewApp() *App {
@@ -41,9 +45,54 @@ func NewApp() *App {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 
-	// 初始化 WebDAV 日志管理器
 	logPath := filepath.Join(utils.GetShelfDir(), "webdav_logs.json")
 	webdav.GlobalLogger.Init(ctx, logPath)
+
+	go a.startIPCServer()
+}
+
+func (a *App) startIPCServer() {
+	http.HandleFunc("/ipc/open-epub", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		r.ParseForm()
+		path := r.FormValue("path")
+		if path == "" {
+			path = r.URL.Query().Get("path")
+		}
+		if path != "" {
+			a.pendingEpubPath = path
+			fmt.Printf("DEBUG: Received EPUB path: %s\n", path)
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+
+	go func() {
+		fmt.Println("DEBUG: Starting IPC server on :50001")
+		err := http.ListenAndServe(":50001", nil)
+		if err != nil {
+			fmt.Printf("DEBUG: IPC server error: %v\n", err)
+		}
+	}()
+}
+
+func (a *App) GetPendingEpubPath() string {
+	path := a.pendingEpubPath
+	a.pendingEpubPath = ""
+
+	if path == "" {
+		ipcFile := filepath.Join(os.TempDir(), "epub-reader-ipc.txt")
+		data, err := os.ReadFile(ipcFile)
+		if err == nil && len(data) > 0 {
+			path = strings.TrimSpace(string(data))
+			os.Remove(ipcFile)
+			fmt.Printf("DEBUG: Read EPUB path from IPC file: %s\n", path)
+		}
+	}
+
+	return path
 }
 
 // ForceQuit 强制退出应用程序
@@ -139,8 +188,29 @@ func (a *App) RenameShelf(oldName string, newName string) error {
 
 	// 2. 同步迁移 WebDAV 配置
 	if err := webdav.RenameConfig(oldName, newName); err != nil {
-		// 如果 WebDAV 配置迁移失败（可能文件不存在），记录日志但不阻断重命名
 		fmt.Printf("WebDAV 配置迁移失败（可能未配置过）: %v\n", err)
+	}
+
+	// 3. 重命名云端文件夹
+	cfg, err := webdav.LoadConfig(newName)
+	if err != nil {
+		fmt.Printf("加载 WebDAV 配置失败，跳过云端重命名: %v\n", err)
+		return nil
+	}
+
+	client, err := webdav.NewClientWrapper(cfg)
+	if err != nil {
+		fmt.Printf("创建 WebDAV 客户端失败，跳过云端重命名: %v\n", err)
+		return nil
+	}
+
+	oldRemotePath := fmt.Sprintf("books/%s", oldName)
+	newRemotePath := fmt.Sprintf("books/%s", newName)
+
+	if err := client.Rename(oldRemotePath, newRemotePath); err != nil {
+		fmt.Printf("云端文件夹重命名失败: %v\n", err)
+	} else {
+		fmt.Printf("云端文件夹已重命名: %s -> %s\n", oldRemotePath, newRemotePath)
 	}
 
 	return nil
@@ -165,6 +235,21 @@ func (a *App) CalculateMD5(data []byte) string {
 	return book.CalculateMD5(data)
 }
 
+func (a *App) CalculateFileMD5(filePath string) (string, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+
+	hash := md5.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return "", err
+	}
+
+	return fmt.Sprintf("%x", hash.Sum(nil)), nil
+}
+
 func (a *App) CopyFile(srcPath, destDir, destFileName string) (string, error) {
 	return book.CopyFile(srcPath, destDir, destFileName)
 }
@@ -182,6 +267,36 @@ func (a *App) ProcessAndImportEpub(filePath, shelfName string) book.ImportResult
 func (a *App) FileExists(filePath string) bool {
 	_, err := os.Stat(filePath)
 	return !os.IsNotExist(err)
+}
+
+// GetBookLocalPath 根据书架名称和书籍 MD5 获取书籍在本地的正确路径
+// 这用于处理从云端同步后，book.filePath 可能是另一台设备的绝对路径的情况
+func (a *App) GetBookLocalPath(shelfName, bookMD5 string) (string, error) {
+	booksDir := utils.GetBooksDir()
+	bookDir := filepath.Join(booksDir, shelfName, bookMD5)
+	configPath := filepath.Join(bookDir, "config.json")
+
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		return "", fmt.Errorf("配置文件不存在: %s", configPath)
+	}
+
+	configData, err := os.ReadFile(configPath)
+	if err != nil {
+		return "", fmt.Errorf("读取配置文件失败: %w", err)
+	}
+
+	var config struct {
+		OriginalFileName string `json:"originalFileName"`
+	}
+	if err := json.Unmarshal(configData, &config); err != nil {
+		return "", fmt.Errorf("解析配置文件失败: %w", err)
+	}
+
+	if config.OriginalFileName == "" {
+		return "", fmt.Errorf("配置文件中未找到原始文件名")
+	}
+
+	return filepath.Join(bookDir, config.OriginalFileName), nil
 }
 
 // FileInfo 文件信息结构
@@ -449,7 +564,24 @@ func (a *App) SaveWebDavConfig(shelfName string, configJSON string) error {
 	if err := json.Unmarshal([]byte(configJSON), &cfg); err != nil {
 		return err
 	}
-	return webdav.SaveConfig(shelfName, &cfg)
+
+	if err := webdav.SaveConfig(shelfName, &cfg); err != nil {
+		return err
+	}
+
+	client, err := webdav.NewClientWrapper(&cfg)
+	if err != nil {
+		return nil
+	}
+
+	configDir := utils.GetConfigDir()
+	localWebdavJson := filepath.Join(configDir, "webdav.json")
+	if err := client.UploadFile(localWebdavJson, "webdav.json"); err != nil {
+		return nil
+	}
+
+	fmt.Printf("webdav.json 已上传到云端\n")
+	return nil
 }
 
 // SyncShelf 同步指定书架到 WebDAV
@@ -624,13 +756,63 @@ func (a *App) DownloadSingleEpub(shelfName string, bookID string, fileName strin
 		return fmt.Errorf("创建 WebDAV 客户端失败: %w", err)
 	}
 
-	// 构建远程路径和本地路径
-	remotePath := fmt.Sprintf("books/%s/%s/%s", shelfName, bookID, fileName)
-	localPath := filepath.Join(utils.GetBooksDir(), shelfName, bookID, fileName)
+	// 获取正确的 EPUB 文件名：优先从本地 config.json 读取，其次从云端下载 config.json
+	// 这是为了处理从云端同步书架后，book.filePath 可能是另一台设备的绝对路径的情况
+	booksDir := utils.GetBooksDir()
+	bookDir := filepath.Join(booksDir, shelfName, bookID)
+	configPath := filepath.Join(bookDir, "config.json")
 
-	// 确保本地目录存在
-	if err := os.MkdirAll(filepath.Dir(localPath), 0755); err != nil {
-		return fmt.Errorf("创建本地目录失败: %w", err)
+	var realFileName string
+
+	// 尝试从本地读取 config.json
+	if _, err := os.Stat(configPath); err == nil {
+		configData, err := os.ReadFile(configPath)
+		if err == nil {
+			var config struct {
+				OriginalFileName string `json:"originalFileName"`
+			}
+			if json.Unmarshal(configData, &config) == nil && config.OriginalFileName != "" {
+				realFileName = config.OriginalFileName
+			}
+		}
+	}
+
+	// 如果本地没有或读取失败，从云端下载 config.json
+	if realFileName == "" {
+		if err := os.MkdirAll(bookDir, 0755); err != nil {
+			return fmt.Errorf("创建本地目录失败: %w", err)
+		}
+		remoteConfigPath := fmt.Sprintf("books/%s/%s/config.json", shelfName, bookID)
+		if err := client.DownloadFile(remoteConfigPath, configPath); err != nil {
+			return fmt.Errorf("下载配置文件失败: %w", err)
+		}
+
+		configData, err := os.ReadFile(configPath)
+		if err != nil {
+			return fmt.Errorf("读取配置文件失败: %w", err)
+		}
+
+		var config struct {
+			OriginalFileName string `json:"originalFileName"`
+		}
+		if err := json.Unmarshal(configData, &config); err != nil {
+			return fmt.Errorf("解析配置文件失败: %w", err)
+		}
+
+		if config.OriginalFileName == "" {
+			return fmt.Errorf("配置文件中未找到原始文件名")
+		}
+		realFileName = config.OriginalFileName
+	}
+
+	// 使用正确的文件名构建远程路径和本地路径
+	remotePath := fmt.Sprintf("books/%s/%s/%s", shelfName, bookID, realFileName)
+	localPath := filepath.Join(bookDir, realFileName)
+
+	// 检查本地是否已存在该书籍文件
+	if _, err := os.Stat(localPath); err == nil {
+		fmt.Printf("书籍文件已存在，跳过下载: %s\n", localPath)
+		return nil
 	}
 
 	// 执行下载
@@ -638,7 +820,7 @@ func (a *App) DownloadSingleEpub(shelfName string, bookID string, fileName strin
 		return fmt.Errorf("下载电子书失败: %w", err)
 	}
 
-	fmt.Printf("书籍下载完成: %s/%s/%s\n", shelfName, bookID, fileName)
+	fmt.Printf("书籍下载完成: %s/%s/%s\n", shelfName, bookID, realFileName)
 	return nil
 }
 
@@ -650,6 +832,45 @@ func (a *App) GetWebDAVLogs() []webdav.LogEntry {
 // ClearWebDAVLogs 清空 WebDAV 交互日志
 func (a *App) ClearWebDAVLogs() {
 	webdav.GlobalLogger.Clear()
+}
+
+// SaveBookCover 将图片保存为书籍封面
+func (a *App) SaveBookCover(shelfName, bookMd5, imageDataBase64 string) error {
+	bookDir := filepath.Join(utils.GetBooksDir(), shelfName, bookMd5)
+	if err := os.MkdirAll(bookDir, 0755); err != nil {
+		return fmt.Errorf("failed to create book directory: %w", err)
+	}
+
+	imageData, err := utils.Base64Decode(imageDataBase64)
+	if err != nil {
+		return fmt.Errorf("failed to decode base64: %w", err)
+	}
+
+	coverPath := filepath.Join(bookDir, "cover.png")
+	if err := os.WriteFile(coverPath, imageData, 0644); err != nil {
+		return fmt.Errorf("failed to write cover file: %w", err)
+	}
+
+	cfg, err := webdav.LoadConfig(shelfName)
+	if err != nil {
+		fmt.Printf("加载 WebDAV 配置失败，跳过封面上传: %v\n", err)
+		return nil
+	}
+
+	client, err := webdav.NewClientWrapper(cfg)
+	if err != nil {
+		fmt.Printf("创建 WebDAV 客户端失败，跳过封面上传: %v\n", err)
+		return nil
+	}
+
+	remotePath := fmt.Sprintf("books/%s/%s/cover.png", shelfName, bookMd5)
+	if err := client.UploadFile(coverPath, remotePath); err != nil {
+		fmt.Printf("封面上传失败: %v\n", err)
+	} else {
+		fmt.Printf("封面已上传到云端: %s\n", remotePath)
+	}
+
+	return nil
 }
 
 // CopyImageToClipboard 复制图片到剪贴板

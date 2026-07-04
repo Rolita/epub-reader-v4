@@ -4,6 +4,8 @@ import {main} from '../models';
 import {webdav} from '../models';
 import {book} from '../models';
 
+export function CalculateFileMD5(arg1:string):Promise<string>;
+
 export function CalculateMD5(arg1:Array<number>):Promise<string>;
 
 export function ClearWebDAVLogs():Promise<void>;
@@ -28,6 +30,8 @@ export function FileExists(arg1:string):Promise<boolean>;
 
 export function ForceQuit():Promise<void>;
 
+export function GetBookLocalPath(arg1:string,arg2:string):Promise<string>;
+
 export function GetBooksDir():Promise<string>;
 
 export function GetEpubImageByPath(arg1:string,arg2:string):Promise<Array<number>>;
@@ -35,6 +39,8 @@ export function GetEpubImageByPath(arg1:string,arg2:string):Promise<Array<number
 export function GetFileBytes(arg1:string):Promise<Array<number>>;
 
 export function GetFileInfo(arg1:string):Promise<main.FileInfo>;
+
+export function GetPendingEpubPath():Promise<string>;
 
 export function GetProgress(arg1:string):Promise<string>;
 
@@ -57,6 +63,8 @@ export function ReadFile(arg1:string):Promise<string>;
 export function RegisterEpubTab(arg1:string,arg2:string):Promise<void>;
 
 export function RenameShelf(arg1:string,arg2:string):Promise<void>;
+
+export function SaveBookCover(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function SaveFile(arg1:string,arg2:string,arg3:Array<number>):Promise<string>;
 

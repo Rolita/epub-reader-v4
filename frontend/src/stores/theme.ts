@@ -132,10 +132,12 @@ export const useThemeStore = defineStore('theme', () => {
         // 深色主题：文字颜色应该更亮
         document.documentElement.style.setProperty('--text-secondary', '#9CA3AF');
         document.documentElement.style.setProperty('--text-muted', '#6B7280');
+        document.documentElement.style.setProperty('--slider-bg', '#374151');
       } else {
         // 浅色主题：文字颜色应该更深
         document.documentElement.style.setProperty('--text-secondary', '#6B7280');
         document.documentElement.style.setProperty('--text-muted', '#9CA3AF');
+        document.documentElement.style.setProperty('--slider-bg', '#DDE6ED');
       }
     }
   };

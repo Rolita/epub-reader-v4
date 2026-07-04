@@ -15,41 +15,58 @@
       <!-- 关闭按钮 -->
       <button class="preview-close" @click="close">×</button>
       
-      <!-- 保存按钮 -->
-      <button class="preview-save" @click="saveImage" title="保存图片">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-          <polyline points="7 10 12 15 17 10"/>
-          <line x1="12" y1="15" x2="12" y2="3"/>
-        </svg>
-      </button>
-      
-      <!-- 复制按钮 -->
-      <button class="preview-copy" @click="copyImage" title="复制图片">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
-          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
-        </svg>
-      </button>
+      <!-- 按钮组 -->
+      <div class="preview-buttons">
+        <!-- 左旋转按钮 -->
+        <button class="preview-btn" @click="rotateLeft" title="向左旋转">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="1 4 1 10 7 10"/>
+            <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
+          </svg>
+        </button>
+        
+        <!-- 右旋转按钮 -->
+        <button class="preview-btn" @click="rotateRight" title="向右旋转">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="23 4 23 10 17 10"/>
+            <path d="M20.49 15a9 9 0 1 1-2.13-9.36L23 10"/>
+          </svg>
+        </button>
+        
+        <!-- 设为封面按钮 -->
+        <button 
+          v-if="bookMd5 && shelfName" 
+          class="preview-btn" 
+          @click="setAsCover" 
+          title="设为封面"
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+            <circle cx="8.5" cy="8.5" r="1.5"/>
+            <polyline points="21 15 16 10 5 21"/>
+          </svg>
+        </button>
+        
+        <!-- 复制按钮 -->
+        <button class="preview-btn" @click="copyImage" title="复制图片">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+          </svg>
+        </button>
+        
+        <!-- 保存按钮 -->
+        <button class="preview-btn" @click="saveImage" title="保存图片">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="7 10 12 15 17 10"/>
+            <line x1="12" y1="15" x2="12" y2="3"/>
+          </svg>
+        </button>
+      </div>
       
       <!-- 复制成功提示 -->
       <div v-if="showCopySuccess" class="copy-success-tip">已复制</div>
-      
-      <!-- 左旋转按钮 -->
-      <button class="preview-rotate preview-rotate-left" @click="rotateLeft" title="向左旋转">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <polyline points="1 4 1 10 7 10"/>
-          <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
-        </svg>
-      </button>
-      
-      <!-- 右旋转按钮 -->
-      <button class="preview-rotate preview-rotate-right" @click="rotateRight" title="向右旋转">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <polyline points="23 4 23 10 17 10"/>
-          <path d="M20.49 15a9 9 0 1 1-2.13-9.36L23 10"/>
-        </svg>
-      </button>
 
       <!-- 大图预览 -->
       <div class="preview-image-wrapper" :style="wrapperStyle">
@@ -74,10 +91,13 @@ const props = defineProps<{
   visible: boolean
   src: string
   alt?: string
+  bookMd5?: string
+  shelfName?: string
 }>()
 
 const emit = defineEmits<{
   (e: 'close'): void
+  (e: 'set-as-cover'): void
 }>()
 
 // 状态
@@ -209,8 +229,12 @@ const saveImage = async () => {
 // 复制图片
 const copyImage = async () => {
   try {
-    // @ts-ignore
-    await window.go.main.App.CopyImageToClipboard(currentSrc.value)
+    if (currentSrc.value.startsWith('/epub-img/')) {
+      // @ts-ignore
+      await window.go.main.App.CopyImageToClipboard(currentSrc.value)
+    } else {
+      await copyImageToClipboardFrontend(currentSrc.value)
+    }
     
     // 显示复制成功提示
     showCopySuccess.value = true
@@ -224,6 +248,111 @@ const copyImage = async () => {
     console.error('复制图片失败:', err)
     alert('复制失败，请尝试右键保存图片')
   }
+}
+
+// 设为封面
+const setAsCover = async () => {
+  if (!props.bookMd5 || !props.shelfName) return
+  
+  try {
+    let imageData: string
+    
+    if (currentSrc.value.startsWith('/epub-img/')) {
+      // @ts-ignore
+      const bytes = await window.go.main.App.GetFileBytes(currentSrc.value)
+      const byteArray = new Uint8Array(bytes)
+      imageData = arrayBufferToBase64(byteArray.buffer)
+    } else {
+      imageData = await imageToBase64(currentSrc.value)
+    }
+    
+    // @ts-ignore
+    await window.go.main.App.SaveBookCover(props.shelfName, props.bookMd5, imageData)
+    
+    showCopySuccess.value = true
+    if (copySuccessTimer) clearTimeout(copySuccessTimer)
+    copySuccessTimer = window.setTimeout(() => {
+      showCopySuccess.value = false
+    }, 2000)
+    
+    emit('set-as-cover')
+  } catch (err) {
+    console.error('设置封面失败:', err)
+    alert('设置封面失败，请重试')
+  }
+}
+
+// 将 ArrayBuffer 转换为 base64
+const arrayBufferToBase64 = (buffer: ArrayBuffer): string => {
+  const bytes = new Uint8Array(buffer)
+  let binary = ''
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i])
+  }
+  return btoa(binary)
+}
+
+// 将图片转换为 base64
+const imageToBase64 = (src: string): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.crossOrigin = 'anonymous'
+    img.onload = () => {
+      const canvas = document.createElement('canvas')
+      canvas.width = img.naturalWidth
+      canvas.height = img.naturalHeight
+      const ctx = canvas.getContext('2d')
+      if (!ctx) {
+        reject(new Error('无法创建 Canvas 上下文'))
+        return
+      }
+      ctx.drawImage(img, 0, 0)
+      const base64 = canvas.toDataURL('image/png').split(',')[1]
+      resolve(base64)
+    }
+    img.onerror = () => {
+      reject(new Error('图片加载失败'))
+    }
+    img.src = src
+  })
+}
+
+// 前端复制图片到剪贴板（回退方案）
+const copyImageToClipboardFrontend = async (src: string): Promise<void> => {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.crossOrigin = 'anonymous'
+    img.onload = () => {
+      const canvas = document.createElement('canvas')
+      canvas.width = img.naturalWidth
+      canvas.height = img.naturalHeight
+      const ctx = canvas.getContext('2d')
+      if (!ctx) {
+        reject(new Error('无法创建 Canvas 上下文'))
+        return
+      }
+      ctx.drawImage(img, 0, 0)
+      
+      canvas.toBlob(async (blob) => {
+        if (!blob) {
+          reject(new Error('无法转换为 Blob'))
+          return
+        }
+        try {
+          await navigator.clipboard.write([
+            new ClipboardItem({ 'image/png': blob })
+          ])
+          resolve()
+        } catch (err) {
+          reject(err)
+        }
+      }, 'image/png')
+    }
+    img.onerror = () => {
+      reject(new Error('图片加载失败'))
+    }
+    img.src = src
+  })
 }
 
 // 监听打开/关闭
@@ -279,10 +408,17 @@ watch(() => props.visible, (newVal) => {
   background: rgba(255, 255, 255, 0.2);
 }
 
-.preview-save {
+.preview-buttons {
   position: absolute;
-  top: 20px;
-  right: 74px;
+  top: 80px;
+  right: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  z-index: 10;
+}
+
+.preview-btn {
   width: 44px;
   height: 44px;
   border: none;
@@ -294,68 +430,17 @@ watch(() => props.visible, (newVal) => {
   align-items: center;
   justify-content: center;
   transition: background 0.2s;
-  z-index: 10;
 }
 
-.preview-save:hover {
+.preview-btn:hover {
   background: rgba(255, 255, 255, 0.2);
-}
-
-.preview-copy {
-  position: absolute;
-  top: 20px;
-  right: 140px;
-  width: 44px;
-  height: 44px;
-  border: none;
-  background: rgba(255, 255, 255, 0.1);
-  color: white;
-  cursor: pointer;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: background 0.2s;
-  z-index: 10;
-}
-
-.preview-copy:hover {
-  background: rgba(255, 255, 255, 0.2);
-}
-
-.preview-rotate {
-  position: absolute;
-  top: 20px;
-  width: 44px;
-  height: 44px;
-  border: none;
-  background: rgba(255, 255, 255, 0.1);
-  color: white;
-  cursor: pointer;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: background 0.2s;
-  z-index: 10;
-}
-
-.preview-rotate:hover {
-  background: rgba(255, 255, 255, 0.2);
-}
-
-.preview-rotate-left {
-  right: 200px;
-}
-
-.preview-rotate-right {
-  right: 260px;
 }
 
 .copy-success-tip {
   position: absolute;
-  top: 80px;
-  right: 140px;
+  bottom: 100px;
+  left: 50%;
+  transform: translateX(-50%);
   background: rgba(0, 0, 0, 0.7);
   color: white;
   padding: 8px 16px;

@@ -42,7 +42,6 @@ export async function handleRestoreProgress(
 
     await readerRef?.restoreProgress?.(progress.cfi)
     await readerRef?.restoreProgress?.(progress.cfi)
-    onNotify('已恢复阅读进度', 'success')
   } catch (e) {
     onNotify('恢复进度失败: ' + (e as Error).message, 'error')
   }

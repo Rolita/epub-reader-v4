@@ -36,6 +36,8 @@
       :visible="imagePreviewVisible" 
       :src="previewImageSrc"
       :alt="previewImageAlt"
+      :book-md5="props.bookMd5"
+      :shelf-name="props.shelfName"
       @close="closeImagePreview"
     />
   </div>
@@ -52,7 +54,7 @@ import { useThemeStore } from '../stores/theme';
 import { saveReaderProgress, restoreReaderProgress } from '../composables/useReaderProgress';
 import FullscreenIcon from './icons/FullscreenIcon.vue';
 
-const props = defineProps<{ filePath: string; isSplitMode?: boolean; isActive?: boolean; tabId?: string }>();
+const props = defineProps<{ filePath: string; isSplitMode?: boolean; isActive?: boolean; tabId?: string; bookMd5?: string; shelfName?: string }>();
 const emit = defineEmits<{ 
   (e: 'click'): void;
   (e: 'scroll'): void;

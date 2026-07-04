@@ -8,14 +8,14 @@ import (
 
 // BookConfig 书籍配置结构体（包含元数据和进度）
 type BookConfig struct {
-	ID               string   `json:"id"`
-	Title            string   `json:"title"`
-	Author           string   `json:"author"`
-	OriginalFileName string   `json:"originalFileName"`
-	MD5              string   `json:"md5"`
-	CoverPath        string   `json:"coverPath"`
-	CreatedAt        int64    `json:"createdAt"`
-	LastCFI          string   `json:"last_cfi"`
+	ID               string `json:"id"`
+	Title            string `json:"title"`
+	Author           string `json:"author"`
+	OriginalFileName string `json:"originalFileName"`
+	MD5              string `json:"md5"`
+	CoverPath        string `json:"coverPath"`
+	CreatedAt        int64  `json:"createdAt"`
+	LastCFI          string `json:"last_cfi"`
 	// 以下字段用于保留 EPUB 元数据
 	Description string   `json:"description,omitempty"`
 	Publisher   string   `json:"publisher,omitempty"`

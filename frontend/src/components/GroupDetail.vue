@@ -197,6 +197,62 @@ const contextMenuRef = ref<HTMLDivElement | null>(null)
 // 搜索功能
 const searchKeyword = ref('')
 
+// 书籍拖拽排序
+const draggingBookId = ref<string | null>(null)
+const dragOverBookId = ref<string | null>(null)
+
+const handleBookDragStart = (event: DragEvent, bookId: string) => {
+  if (isSelectMode.value) {
+    event.preventDefault()
+    return
+  }
+  draggingBookId.value = bookId
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('text/plain', bookId)
+  }
+}
+
+const handleBookDragOver = (event: DragEvent, bookId: string) => {
+  event.preventDefault()
+  if (event.dataTransfer) {
+    event.dataTransfer.dropEffect = 'move'
+  }
+  dragOverBookId.value = bookId
+}
+
+const handleBookDragLeave = () => {
+  dragOverBookId.value = null
+}
+
+const handleBookDrop = (event: DragEvent, targetBookId: string) => {
+  event.preventDefault()
+  
+  if (!draggingBookId.value || draggingBookId.value === targetBookId) {
+    draggingBookId.value = null
+    dragOverBookId.value = null
+    return
+  }
+  
+  const groupId = props.groupId || store.activeGroupId || undefined
+  
+  const filteredBooks = books.value.filter(b => b.groupId === groupId)
+  const fromIndex = filteredBooks.findIndex(b => b.id === draggingBookId.value)
+  const toIndex = filteredBooks.findIndex(b => b.id === targetBookId)
+  
+  if (fromIndex !== -1 && toIndex !== -1) {
+    store.reorderBook(fromIndex, toIndex, groupId)
+  }
+  
+  draggingBookId.value = null
+  dragOverBookId.value = null
+}
+
+const handleBookDragEnd = () => {
+  draggingBookId.value = null
+  dragOverBookId.value = null
+}
+
 // ============ 快捷键功能 ============
 
 // 检查当前焦点是否在输入框内
@@ -544,9 +600,15 @@ const getBookKey = (book: any): string => {
 }
 
 const isBookDownloaded = async (book: any): Promise<boolean> => {
-  if (!book.filePath) return false
-  // @ts-ignore
-  return await window.go.main.App.FileExists(book.filePath)
+  if (!book.md5 || !store.activeShelf) return false
+  try {
+    // @ts-ignore
+    const localPath = await window.go.main.App.GetBookLocalPath(store.activeShelf.name, book.md5)
+    // @ts-ignore
+    return await window.go.main.App.FileExists(localPath)
+  } catch {
+    return false
+  }
 }
 
 const checkAllBooksStatus = async () => {
@@ -565,7 +627,7 @@ const updateBookStatus = (book: any, downloaded: boolean) => {
 }
 
 const downloadBook = async (book: any) => {
-  if (!book.md5 || !book.filePath || !store.activeShelf) return
+  if (!book.md5 || !store.activeShelf) return
   
   const bookKey = getBookKey(book)
   if (downloadingBooks.value.has(bookKey)) {
@@ -573,7 +635,6 @@ const downloadBook = async (book: any) => {
     return
   }
   
-  // 检查本地是否已有该书籍文件
   const exists = await isBookDownloaded(book)
   if (exists) {
     console.log('该书籍已存在，跳过下载:', book.title)
@@ -584,9 +645,8 @@ const downloadBook = async (book: any) => {
   downloadingBooks.value.add(bookKey)
   
   try {
-    const fileName = book.filePath.split('/').pop() || book.filePath.split('\\').pop()
     // @ts-ignore
-    await window.go.main.App.DownloadSingleEpub(store.activeShelf.name, book.md5, fileName)
+    await window.go.main.App.DownloadSingleEpub(store.activeShelf.name, book.md5, '')
     console.log('书籍下载完成:', book.title)
     updateBookStatus(book, true)
   } catch (e) {
@@ -596,8 +656,23 @@ const downloadBook = async (book: any) => {
   }
 }
 
+const updateBookLocalPath = async (book: any) => {
+  if (!book.md5 || !store.activeShelf) return
+  
+  try {
+    // @ts-ignore
+    const localPath = await window.go.main.App.GetBookLocalPath(store.activeShelf.name, book.md5)
+    if (localPath) {
+      book.filePath = localPath
+      await store.saveBooks()
+    }
+  } catch (error) {
+    console.error('更新书籍路径失败:', error)
+  }
+}
+
 const openBook = async (book: any) => {
-  if (!book.filePath || !store.activeShelf) return
+  if (!book.md5 || !store.activeShelf) return
   
   const bookKey = getBookKey(book)
   
@@ -612,11 +687,11 @@ const openBook = async (book: any) => {
     downloadingBooks.value.add(bookKey)
     
     try {
-      const fileName = book.filePath.split('/').pop() || book.filePath.split('\\').pop()
       // @ts-ignore
-      await window.go.main.App.DownloadSingleEpub(store.activeShelf.name, book.md5, fileName)
+      await window.go.main.App.DownloadSingleEpub(store.activeShelf.name, book.md5, '')
       console.log('书籍下载完成，准备打开:', book.title)
       updateBookStatus(book, true)
+      await updateBookLocalPath(book)
     } catch (e) {
       console.error('下载失败:', e)
       downloadingBooks.value.delete(bookKey)
@@ -696,6 +771,16 @@ const handleContextMenuRemoveFromGroup = async () => {
   if (!contextMenu.value.bookId) return
   
   await store.removeBookFromGroup(contextMenu.value.bookId)
+  
+  closeContextMenu()
+}
+
+const handleContextMenuMoveToGroup = () => {
+  if (!contextMenu.value.bookId) return
+  
+  selectedBooks.value.clear()
+  selectedBooks.value.add(contextMenu.value.bookId)
+  showMoveToGroupDialog.value = true
   
   closeContextMenu()
 }
@@ -890,9 +975,15 @@ const handleClickOutsideContextMenu = (event: MouseEvent) => {
         <div 
           v-for="book in filteredBooks" 
           :key="book.id" 
-          :class="['book-card', { selected: selectedBooks.has(book.id), 'select-mode': isSelectMode }]"
+          draggable="true"
+          :class="['book-card', { selected: selectedBooks.has(book.id), 'select-mode': isSelectMode, 'dragging': draggingBookId === book.id, 'drag-over': dragOverBookId === book.id }]"
           @click="handleBookClick($event, book)"
           @contextmenu="showContextMenu($event, book.id)"
+          @dragstart="handleBookDragStart($event, book.id)"
+          @dragover="handleBookDragOver($event, book.id)"
+          @dragleave="handleBookDragLeave"
+          @drop="handleBookDrop($event, book.id)"
+          @dragend="handleBookDragEnd"
         >
           <div class="cover-wrapper">
             <div class="cover">
@@ -934,7 +1025,11 @@ const handleClickOutsideContextMenu = (event: MouseEvent) => {
       <button class="context-menu-item" @click="startRenameBook">
         重命名
       </button>
-      
+
+      <button class="context-menu-item" @click="handleContextMenuMoveToGroup">
+        书籍分组
+      </button>
+
       <button class="context-menu-item" @click="handleContextMenuRemoveFromGroup">
         移出分组
       </button>
@@ -1026,6 +1121,7 @@ const handleClickOutsideContextMenu = (event: MouseEvent) => {
           class="group-option"
           :class="{ active: selectedTargetGroupId === group.id }"
           @click="selectedTargetGroupId = group.id"
+          @dblclick="handleMoveToGroupDirectly(group.id)"
         >
           <FolderIcon :size="18" />
           <span class="group-name">{{ group.name }}</span>
@@ -1370,9 +1466,28 @@ const handleClickOutsideContextMenu = (event: MouseEvent) => {
 .book-card {
   display: flex;
   flex-direction: column;
-  cursor: pointer;
+  cursor: grab;
   position: relative;
   border-radius: var(--radius-xl);
+  user-select: none;
+  transition: all 0.2s ease;
+}
+
+.book-card:active {
+  cursor: grabbing;
+}
+
+.book-card.dragging {
+  opacity: 0.3;
+}
+
+.book-card.dragging .cover-wrapper::before {
+  opacity: 0;
+}
+
+.book-card.drag-over .cover {
+  border: 2px solid var(--primary-color);
+  background: rgba(79, 70, 229, 0.05);
 }
 
 .cover-wrapper {
@@ -1804,7 +1919,7 @@ const handleClickOutsideContextMenu = (event: MouseEvent) => {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 14px 16px;
+  padding: 8px 16px;
   border-radius: var(--radius-lg);
   cursor: pointer;
   transition: all var(--transition-fast);
@@ -1841,7 +1956,7 @@ const handleClickOutsideContextMenu = (event: MouseEvent) => {
   justify-content: center;
   gap: 8px;
   margin-top: 12px;
-  padding: 12px 16px;
+  padding: 8px 16px;
   border: 1px dashed var(--border-color);
   border-radius: var(--radius-lg);
   cursor: pointer;

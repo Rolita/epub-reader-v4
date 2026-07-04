@@ -9,6 +9,8 @@ import BookDetailTab from '../components/BookDetailTab.vue'
 import GroupDetail from '../components/GroupDetail.vue'
 import CustomModal from '../components/CustomModal.vue'
 import EmptyState from '../components/EmptyState.vue'
+import ShelfSelector from '../components/ShelfSelector.vue'
+import { importBook } from '../utils/bookImporter'
 import { useLibraryStore } from '../stores/library'
 import { useBookStore } from '../stores/book'
 import { useThemeStore } from '../stores/theme'
@@ -40,6 +42,8 @@ interface Tab {
   type: 'bookshelf' | 'settings' | 'reader' | 'add-theme' | 'book-detail' | 'group-detail'
   bookId?: string
   filePath?: string
+  bookMd5?: string
+  shelfName?: string
   editThemeId?: string
   bookData?: any
   groupData?: any
@@ -53,9 +57,11 @@ interface Pane {
 }
 
 const store = useLibraryStore()
+const settingsStore = useSettingsStore()
 const bookStore = useBookStore()
 const themeStore = useThemeStore()
 const tabs = ref<Tab[]>([])
+let checkPendingEpubInterval: number | null = null
 
 // ===== 分屏布局状态 =====
 const layout = ref<{
@@ -228,8 +234,15 @@ watch(activeTabId, (newTabId, oldTabId) => {
 
 // WebDAV 下载状态
 const isDownloading = ref(false)
-const downloadStatus = ref('')
-const downloadStatusType = ref<'success' | 'error' | ''>('')
+
+interface ToastItem {
+  id: number
+  message: string
+  type: 'success' | 'error'
+}
+
+const toastList = ref<ToastItem[]>([])
+let toastIdCounter = 0
 
 // 全局弹窗状态（用于监听 store 发出的事件）
 const globalModal = ref({
@@ -326,7 +339,6 @@ const collectIllustrationsFromReader = async () => {
     const illustrations = await reader.getIllustrations?.()
     console.log('[插图收集] 从阅读器获取到', illustrations?.length || 0, '张图片')
     
-    const settingsStore = useSettingsStore()
     settingsStore.setIllustrations(illustrations || [])
   } catch (err) {
     console.error('[插图收集] 获取插图失败:', err)
@@ -381,31 +393,21 @@ const handleRefresh = async () => {
 
 // 显示气泡提示（来自 WebDAV 侧边栏）
 const handleShowToast = (message: string, type: 'success' | 'error') => {
-  downloadStatus.value = message
-  downloadStatusType.value = type
-  setTimeout(() => {
-    downloadStatus.value = ''
-  }, 3000)
+  showToast(message, type)
 }
 
 // 从云端下载（WebDAV）
 const handleDownloadFromCloud = async () => {
   if (!store.activeShelfId) {
-    downloadStatus.value = '请先选择一个书架'
-    downloadStatusType.value = 'error'
-    setTimeout(() => {
-      downloadStatus.value = ''
-    }, 3000)
+    showToast('请先选择一个书架', 'error')
     return
   }
   
   isDownloading.value = true
-  downloadStatus.value = ''
   try {
     // @ts-ignore
     const res = await window.go.main.App.DownloadShelf(store.activeShelfId)
-    downloadStatus.value = '下载成功: ' + res
-    downloadStatusType.value = 'success'
+    showToast('下载成功: ' + res, 'success')
     
     // 下载成功后刷新
     store.scanShelves()
@@ -413,19 +415,8 @@ const handleDownloadFromCloud = async () => {
       await store.loadShelfBooks(store.activeShelfId)
     }
     handleRefresh()
-    
-    // 1秒后自动隐藏气泡
-    setTimeout(() => {
-      downloadStatus.value = ''
-    }, 1500)
   } catch (e) {
-    downloadStatus.value = '下载失败: ' + (e as Error).message
-    downloadStatusType.value = 'error'
-    
-    // 1秒后自动隐藏气泡
-    setTimeout(() => {
-      downloadStatus.value = ''
-    }, 1500)
+    showToast('下载失败: ' + (e as Error).message, 'error')
   } finally {
     isDownloading.value = false
   }
@@ -433,10 +424,18 @@ const handleDownloadFromCloud = async () => {
 
 // 气泡通知辅助函数
 const showToast = (message: string, type: 'success' | 'error') => {
-  downloadStatus.value = message
-  downloadStatusType.value = type
-  const duration = type === 'success' ? 1500 : 3000
-  setTimeout(() => { downloadStatus.value = '' }, duration)
+  const id = ++toastIdCounter
+  const toastItem: ToastItem = { id, message, type }
+  
+  toastList.value.push(toastItem)
+  
+  const duration = type === 'success' ? 5000 : 5000
+  setTimeout(() => {
+    const index = toastList.value.findIndex(t => t.id === id)
+    if (index !== -1) {
+      toastList.value.splice(index, 1)
+    }
+  }, duration)
 }
 
 // 恢复阅读进度
@@ -454,7 +453,10 @@ const handleReaderReady = () => {
 // 保存阅读进度
 const handleSaveProgress = async () => {
   if (layout.value.mode === 'single') {
-    await saveProgressAction(activeTab.value, getActiveReader() || null, showToast)
+    if (!activeTab.value || activeTab.value.type !== 'reader') return
+    const reader = getActiveReader()
+    if (!reader) return
+    await saveProgressAction(activeTab.value, reader, showToast)
   } else {
     let savedCount = 0
     for (const pane of layout.value.panes) {
@@ -649,7 +651,17 @@ const openReaderTab = async (book: any, targetPaneId?: string) => {
   } else {
     let filePath = book.filePath
     
-    if (!filePath && book.md5) {
+    if (book.md5 && book.shelfId) {
+      try {
+        // @ts-ignore
+        const localPath = await window.go.main.App.GetBookLocalPath(book.shelfId, book.md5)
+        if (localPath) {
+          filePath = localPath
+        }
+      } catch (error) {
+        console.error('获取书籍本地路径失败:', error)
+      }
+    } else if (!filePath && book.md5) {
       const shelfDir = book.shelfId || '默认书架'
       // @ts-ignore
       const booksDir = await window.go.main.App.GetBooksDir()
@@ -662,11 +674,12 @@ const openReaderTab = async (book: any, targetPaneId?: string) => {
       type: 'reader',
       bookId: book.id,
       filePath: filePath,
+      bookMd5: book.md5,
+      shelfName: book.shelfId,
       icon: 'reader'
     }
     tabs.value.push(newTab)
     activeTabId.value = newTab.id
-    // 如果指定了 targetPaneId，使用该 pane；否则使用当前焦点 pane
     const paneId = targetPaneId || getFocusedPane()?.id || layout.value.panes[0].id
     addTabToPane(newTab.id, paneId)
     
@@ -697,9 +710,12 @@ const closeTab = async (tabId: string) => {
       readerRefs.delete(tabId)
     }
     
-    // 如果关闭的是阅读器标签，清空目录
+    // 如果关闭的是阅读器标签，注销 EPUB 文件并释放文件句柄
     if (closingTab.type === 'reader') {
+      // @ts-ignore
+      await window.go.main.App.UnregisterEpubTab(tabId)
       bookStore.clearActiveBook()
+      settingsStore.clearIllustrations()
     }
     
     // 如果关闭的是分组标签，清空激活的分组
@@ -1099,15 +1115,162 @@ const closeWindow = async () => {
   }
 }
 
+const shelfSelectorVisible = ref(false)
+const pendingEpubPath = ref('')
+
+const handleOpenPendingEpub = async () => {
+  await store.scanShelves()
+  
+  const path = pendingEpubPath.value
+  if (!path) return
+  
+  if (store.shelves.length === 1) {
+    await importAndOpenBook(path, store.shelves[0].id)
+    return
+  }
+  
+  if (store.shelves.length > 1) {
+    const bookMd5 = await getFileMd5(path)
+    if (bookMd5) {
+      const bookInActiveShelf = store.currentBooks.find((b: any) => b.md5 === bookMd5)
+      if (bookInActiveShelf) {
+        openReaderTab(bookInActiveShelf)
+        showToast('书籍已存在，直接打开', 'success')
+        pendingEpubPath.value = ''
+        return
+      }
+    }
+    
+    shelfSelectorVisible.value = true
+  }
+}
+
+const getFileMd5 = async (filePath: string): Promise<string> => {
+  try {
+    // @ts-ignore
+    const md5 = await window.go.main.App.CalculateFileMD5(filePath)
+    return md5 || ''
+  } catch (e) {
+    console.error('获取文件MD5失败:', e)
+  }
+  return ''
+}
+
+const handleShelfSelect = async (shelfId: string, epubPath: string) => {
+  shelfSelectorVisible.value = false
+  await importAndOpenBook(epubPath, shelfId)
+}
+
+const handleShelfSelectorClose = () => {
+  shelfSelectorVisible.value = false
+  pendingEpubPath.value = ''
+}
+
+const handleImportOnly = async (shelfId: string, epubPath: string) => {
+  shelfSelectorVisible.value = false
+  try {
+    showToast('正在导入书籍...', 'success')
+    
+    const result = await importBook(epubPath, shelfId)
+    
+    if (result.success) {
+      await store.addBook(
+        result.title,
+        result.coverUrl,
+        result.md5,
+        result.filePath,
+        result.author
+      )
+      showToast('书籍导入成功', 'success')
+    } else {
+      showToast('导入失败: ' + (result.error || '未知错误'), 'error')
+    }
+  } catch (error) {
+    showToast('导入失败: ' + (error as Error).message, 'error')
+  } finally {
+    pendingEpubPath.value = ''
+  }
+}
+
+const importAndOpenBook = async (filePath: string, shelfId: string) => {
+  try {
+    showToast('正在导入书籍...', 'success')
+    
+    await store.setActiveShelf(shelfId)
+    
+    const result = await importBook(filePath, shelfId)
+    
+    if (result.success) {
+      const isAdded = await store.addBook(
+        result.title,
+        result.coverUrl,
+        result.md5,
+        result.filePath,
+        result.author
+      )
+      
+      if (isAdded) {
+        const book = store.currentBooks.find((b: any) => b.md5 === result.md5)
+        if (book) {
+          openReaderTab(book)
+          showToast('书籍导入成功', 'success')
+        }
+      } else {
+        const book = store.currentBooks.find((b: any) => b.md5 === result.md5)
+        if (book) {
+          openReaderTab(book)
+          showToast('书籍已存在，直接打开', 'success')
+        }
+      }
+    } else {
+      showToast('导入失败: ' + (result.error || '未知错误'), 'error')
+    }
+  } catch (error) {
+    showToast('导入失败: ' + (error as Error).message, 'error')
+  } finally {
+    pendingEpubPath.value = ''
+  }
+}
+
 onMounted(() => {
   store.scanShelves()
   document.addEventListener('click', handleClickOutside)
   document.addEventListener('contextmenu', handleClickOutside)
+  
+  ;(async () => {
+    await nextTick()
+    try {
+      // @ts-ignore
+      const path = await window.go.main.App.GetPendingEpubPath()
+      if (path) {
+        pendingEpubPath.value = path
+        await handleOpenPendingEpub()
+      }
+    } catch (e) {
+      console.error('获取待打开 EPUB 路径失败:', e)
+    }
+  })()
+  
+  checkPendingEpubInterval = window.setInterval(async () => {
+    try {
+      // @ts-ignore
+      const path = await window.go.main.App.GetPendingEpubPath()
+      if (path) {
+        pendingEpubPath.value = path
+        await handleOpenPendingEpub()
+      }
+    } catch (e) {
+      // ignore
+    }
+  }, 1000)
 })
 
 onUnmounted(() => {
   document.removeEventListener('click', handleClickOutside)
   document.removeEventListener('contextmenu', handleClickOutside)
+  if (checkPendingEpubInterval !== null) {
+    clearInterval(checkPendingEpubInterval)
+  }
 })
 </script>
 
@@ -1165,11 +1328,13 @@ onUnmounted(() => {
           title="从云端下载"
         ><DownloadIcon :size="22" /></button>
         <button 
+          v-if="false"
           class="func-btn" 
           @click="handleRestoreProgress" 
           title="恢复阅读进度"
         ><BookmarkIcon :size="22" /></button>
         <button 
+          v-if="false"
           class="func-btn" 
           @click="handleSaveProgress" 
           title="保存阅读进度"
@@ -1373,6 +1538,8 @@ onUnmounted(() => {
                 v-show="activeTabId === tab.id"
                 :file-path="tab.filePath"
                 :tab-id="tab.id"
+                :book-md5="tab.bookMd5"
+                :shelf-name="tab.shelfName"
                 :ref="(el: any) => { 
                   if (el) readerRefs.set(tab.id, el)
                   else readerRefs.delete(tab.id)
@@ -1434,6 +1601,8 @@ onUnmounted(() => {
                       v-show="pane.activeTabId === tab.id"
                       :file-path="tab.filePath"
                       :tab-id="tab.id"
+                      :book-md5="tab.bookMd5"
+                      :shelf-name="tab.shelfName"
                       :is-split-mode="true"
                       :is-active="tab.id === activeTabId"
                       @click="switchTab(tab.id, pane.id)"
@@ -1501,6 +1670,8 @@ onUnmounted(() => {
                       v-show="pane.activeTabId === tab.id"
                       :file-path="tab.filePath"
                       :tab-id="tab.id"
+                      :book-md5="tab.bookMd5"
+                      :shelf-name="tab.shelfName"
                       :is-split-mode="true"
                       :is-active="tab.id === activeTabId"
                       @click="switchTab(tab.id, pane.id)"
@@ -1520,11 +1691,14 @@ onUnmounted(() => {
       </template>
       
       <!-- 下载状态气泡提示 -->
-      <div 
-        v-if="downloadStatus" 
-        :class="['download-toast', downloadStatusType]"
-      >
-        {{ downloadStatus }}
+      <div class="toast-container">
+        <div 
+          v-for="toast in toastList" 
+          :key="toast.id"
+          :class="['download-toast', toast.type]"
+        >
+          {{ toast.message }}
+        </div>
       </div>
       
       <EmptyState v-if="!activeTab" @action="showCreateShelfHint" />
@@ -1538,6 +1712,15 @@ onUnmounted(() => {
       :type="globalModal.type"
       :showCancel="false"
       @confirm="handleGlobalModalConfirm"
+    />
+    
+    <!-- 书架选择弹窗 -->
+    <ShelfSelector
+      :visible="shelfSelectorVisible"
+      :epub-path="pendingEpubPath"
+      @close="handleShelfSelectorClose"
+      @select="handleShelfSelect"
+      @import-only="handleImportOnly"
     />
   </div>
 </template>
@@ -1654,16 +1837,24 @@ onUnmounted(() => {
   pointer-events: none;
 }
 
-/* 下载状态气泡 */
-.download-toast {
+/* 气泡容器 */
+.toast-container {
   position: fixed;
   bottom: 24px;
   right: 24px;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: flex-end;
+}
+
+/* 下载状态气泡 */
+.download-toast {
   padding: 14px 20px;
   border-radius: 10px;
   font-size: 0.9rem;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
-  z-index: 9999;
   max-width: 400px;
   animation: slideUp 0.3s ease;
 }

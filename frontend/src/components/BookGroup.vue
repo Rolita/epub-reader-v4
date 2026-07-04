@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useLibraryStore, type Group } from '../stores/library'
 import BookIcon from './icons/BookIcon.vue'
 import FolderIcon from './icons/FolderIcon.vue'
+import DefaultCover from './DefaultCover.vue'
 
 interface Props {
   group: Group
@@ -21,14 +22,10 @@ const groupBooks = computed(() => {
   return store.currentBooks.filter(b => b.groupId === props.group.id)
 })
 
-// 获取分组内书籍的封面（最多4个，用于2x2显示）
-const groupCovers = computed(() => {
-  const covers = groupBooks.value
-    .filter(book => book.coverUrl)
+// 获取分组内书籍（最多4个，用于2x2显示）
+const groupBooksForCover = computed(() => {
+  return groupBooks.value
     .slice(0, 4)
-    .map(book => book.coverUrl)
-  
-  return covers
 })
 
 // 获取分组内的书籍数量
@@ -40,10 +37,16 @@ const handleClick = () => {
   emit('click', props.group)
 }
 
+const coverFailed = ref<Set<number>>(new Set())
+
 const handleContextMenu = (event: MouseEvent) => {
   event.preventDefault()
   event.stopPropagation()
   emit('contextmenu', event, props.group)
+}
+
+const handleCoverError = (event: Event, index: number) => {
+  coverFailed.value.add(index)
 }
 </script>
 
@@ -56,17 +59,20 @@ const handleContextMenu = (event: MouseEvent) => {
     <div class="cover-wrapper">
       <div class="cover">
         <!-- 2x2 封面网格 -->
-        <div v-if="groupCovers.length > 0" class="covers-grid">
+        <div v-if="groupBooksForCover.length > 0" class="covers-grid">
           <div 
-            v-for="(cover, index) in groupCovers" 
+            v-for="(book, index) in groupBooksForCover" 
             :key="index"
             class="cover-item"
           >
             <img 
-              :src="cover" 
+              v-if="book.coverUrl && !coverFailed.has(index)" 
+              :src="book.coverUrl" 
               :alt="`封面 ${index + 1}`" 
               class="cover-thumbnail"
+              @error="handleCoverError($event, index)"
             />
+            <DefaultCover v-else :title="book.title" :author="book.author" :compact="true" />
           </div>
         </div>
         
@@ -86,9 +92,32 @@ const handleContextMenu = (event: MouseEvent) => {
 .group-card {
   display: flex;
   flex-direction: column;
-  cursor: pointer;
+  cursor: grab;
   position: relative;
   border-radius: var(--radius-xl);
+  user-select: none;
+  transition: all 0.2s ease;
+}
+
+.group-card:active {
+  cursor: grabbing;
+}
+
+.group-card.dragging {
+  opacity: 0.3;
+}
+
+.group-card.dragging .cover-wrapper::before {
+  opacity: 0;
+}
+
+.group-card.drag-over .cover {
+  border: 2px solid var(--primary-color);
+  background: rgba(79, 70, 229, 0.1);
+}
+
+.group-card.drag-over {
+  transform: scale(1.02);
 }
 
 .cover-wrapper {
