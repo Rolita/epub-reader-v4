@@ -15,12 +15,13 @@ type Metadata struct {
 
 // Book 书籍信息
 type Book struct {
-	ID       string `json:"id"`
-	Title    string `json:"title"`
-	Author   string `json:"author"`
-	CoverURL string `json:"coverUrl"`
-	FilePath string `json:"filePath"`
-	ShelfID  string `json:"shelfId"`
+	ID         string `json:"id"`
+	Title      string `json:"title"`
+	Author     string `json:"author"`
+	CoverURL   string `json:"coverUrl"`
+	FilePath   string `json:"filePath"`
+	ShelfID    string `json:"shelfId"`
+	ReadStatus string `json:"readStatus"`
 }
 
 // Library 书架库数据结构

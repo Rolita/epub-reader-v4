@@ -873,6 +873,33 @@ func (a *App) SaveBookCover(shelfName, bookMd5, imageDataBase64 string) error {
 	return nil
 }
 
+type WindowSizeConfig struct {
+	Width  int `json:"width"`
+	Height int `json:"height"`
+}
+
+func (a *App) SaveWindowSize(width, height int) error {
+	config := WindowSizeConfig{Width: width, Height: height}
+	data, err := json.Marshal(config)
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(utils.GetConfigDir(), "window_size.json")
+	return os.WriteFile(path, data, 0644)
+}
+
+func (a *App) GetWindowSize() (string, error) {
+	path := filepath.Join(utils.GetConfigDir(), "window_size.json")
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return `{"width":1920,"height":1080}`, nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
 // CopyImageToClipboard 复制图片到剪贴板
 func (a *App) CopyImageToClipboard(imageURL string) error {
 	// 解析图片 URL，格式: /epub-img/{tabId}/{resPath}

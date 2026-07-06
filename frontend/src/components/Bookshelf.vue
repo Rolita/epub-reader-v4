@@ -203,7 +203,9 @@ const contextMenu = ref({
   show: false,
   x: 0,
   y: 0,
-  bookId: ''
+  bookId: '',
+  isTop: false,
+  isLeft: false
 })
 const contextMenuRef = ref<HTMLDivElement | null>(null)
 
@@ -334,6 +336,41 @@ const handleBatchDelete = async () => {
       exitSelectMode()
     }}
   )
+}
+
+// 计算批量操作的状态文本
+const batchReadStatusText = computed(() => {
+  let hasRead = false
+  let hasUnread = false
+  
+  for (const bookId of selectedBooks.value) {
+    const book = currentBooksOnly.value.find((b: any) => b.id === bookId)
+    if (book?.readStatus === 'read') {
+      hasRead = true
+    } else {
+      hasUnread = true
+    }
+    
+    if (hasRead && hasUnread) break
+  }
+  
+  if (hasRead && !hasUnread) return '未读'
+  return '已读'
+})
+
+// 批量切换阅读状态
+const handleBatchToggleRead = async () => {
+  if (selectedBooks.value.size === 0) return
+  
+  const targetStatus = batchReadStatusText.value === '已读' ? 'read' : 'unread'
+  
+  for (const bookId of selectedBooks.value) {
+    const book = currentBooksOnly.value.find((b: any) => b.id === bookId)
+    if (book) {
+      book.readStatus = targetStatus
+      await store.updateBook(book)
+    }
+  }
 }
 
 // 批量下载选中书籍（只下载本地不存在的）
@@ -763,13 +800,70 @@ onMounted(async () => {
   document.addEventListener('click', handleClickOutside)
   document.addEventListener('click', handleClickOutsideContextMenu)
   document.addEventListener('click', handleClickOutsideGroupContextMenu)
+  document.addEventListener('click', handleClickOutsideLayoutContextMenu)
 })
 
 onUnmounted(() => {
   document.removeEventListener('click', handleClickOutside)
   document.removeEventListener('click', handleClickOutsideContextMenu)
   document.removeEventListener('click', handleClickOutsideGroupContextMenu)
+  document.removeEventListener('click', handleClickOutsideLayoutContextMenu)
 })
+
+// 书架背景右键菜单
+const showLayoutContextMenu = (event: MouseEvent) => {
+  event.preventDefault()
+  event.stopPropagation()
+  
+  const target = event.target as HTMLElement
+  if (target.closest('.book-card') || target.closest('.book-group') || 
+      target.closest('.topbar') || target.closest('.context-menu')) {
+    return
+  }
+  
+  closeContextMenu()
+  closeGroupContextMenu()
+  emit('close-tab-menu')
+  
+  const menuHeight = 140
+  const menuWidth = 140
+  const isTop = event.clientY + menuHeight > window.innerHeight
+  const isLeft = event.clientX + menuWidth > window.innerWidth
+  
+  layoutContextMenu.value = {
+    show: true,
+    x: isLeft ? event.clientX - menuWidth : event.clientX,
+    y: isTop ? event.clientY - menuHeight : event.clientY,
+    isTop,
+    isLeft
+  }
+}
+
+const closeLayoutContextMenu = () => {
+  layoutContextMenu.value.show = false
+  activeSubMenu.value = null
+}
+
+const handleClickOutsideLayoutContextMenu = (event: MouseEvent) => {
+  if (layoutContextMenuRef.value && !layoutContextMenuRef.value.contains(event.target as Node)) {
+    closeLayoutContextMenu()
+  }
+}
+
+const handleSetColumns = (columns: number) => {
+  settingsStore.bookshelfColumns = columns
+  closeLayoutContextMenu()
+}
+
+const handleSetGap = (gap: number) => {
+  settingsStore.coverGap = gap
+  closeLayoutContextMenu()
+}
+
+const handleSetSort = (sort: string) => {
+  settingsStore.sortBy = sort
+  closeLayoutContextMenu()
+}
 
 const handleDeleteBook = (bookId: string) => {
   showConfirmModal(
@@ -795,11 +889,18 @@ const showContextMenu = (event: MouseEvent, bookId: string) => {
   closeContextMenu()
   emit('close-tab-menu')
   
+  const menuHeight = 220
+  const menuWidth = 160
+  const isTop = event.clientY + menuHeight > window.innerHeight
+  const isLeft = event.clientX + menuWidth > window.innerWidth
+  
   contextMenu.value = {
     show: true,
-    x: event.clientX,
-    y: event.clientY,
-    bookId
+    x: isLeft ? event.clientX - menuWidth : event.clientX,
+    y: isTop ? event.clientY - menuHeight : event.clientY,
+    bookId,
+    isTop,
+    isLeft
   }
 }
 
@@ -869,6 +970,29 @@ const handleContextMenuMoveToGroup = () => {
   // 打开移动到分组面板
   showMoveToGroupDialog.value = true
   
+  closeContextMenu()
+}
+
+// 获取当前书籍的阅读状态文本
+const getReadStatusText = () => {
+  if (!contextMenu.value.bookId) return '标记状态'
+  const book = currentBooksOnly.value.find((b: any) => b.id === contextMenu.value.bookId)
+  return book?.readStatus === 'read' ? '标记为未读' : '标记为已读'
+}
+
+// 切换阅读状态
+const handleToggleReadStatus = async () => {
+  if (!contextMenu.value.bookId) return
+  
+  const book = currentBooksOnly.value.find((b: any) => b.id === contextMenu.value.bookId)
+  if (!book) {
+    closeContextMenu()
+    return
+  }
+  
+  book.readStatus = book.readStatus === 'read' ? 'unread' : 'read'
+  
+  await store.updateBook(book)
   closeContextMenu()
 }
 
@@ -1171,8 +1295,29 @@ const groupContextMenu = ref({
   show: false,
   x: 0,
   y: 0,
-  groupId: ''
+  groupId: '',
+  isTop: false,
+  isLeft: false
 })
+
+// 书架布局右键菜单
+const layoutContextMenu = ref({
+  show: false,
+  x: 0,
+  y: 0,
+  isTop: false,
+  isLeft: false
+})
+const layoutContextMenuRef = ref<HTMLDivElement | null>(null)
+const activeSubMenu = ref<string | null>(null)
+
+const columnOptions = [3, 4, 5, 6, 7, 8]
+const gapOptions = [8, 12, 20]
+const sortOptions = [
+  { value: 'default', label: '默认' },
+  { value: 'title-asc', label: '标题 A→Z' },
+  { value: 'title-desc', label: '标题 Z→A' }
+]
 
 const showGroupContextMenu = (event: MouseEvent, groupId: string) => {
   event.preventDefault()
@@ -1185,11 +1330,18 @@ const showGroupContextMenu = (event: MouseEvent, groupId: string) => {
   closeGroupContextMenu()
   emit('close-tab-menu')
   
+  const menuHeight = 100
+  const menuWidth = 140
+  const isTop = event.clientY + menuHeight > window.innerHeight
+  const isLeft = event.clientX + menuWidth > window.innerWidth
+  
   groupContextMenu.value = {
     show: true,
-    x: event.clientX,
-    y: event.clientY,
-    groupId
+    x: isLeft ? event.clientX - menuWidth : event.clientX,
+    y: isTop ? event.clientY - menuHeight : event.clientY,
+    groupId,
+    isTop,
+    isLeft
   }
 }
 
@@ -1337,7 +1489,7 @@ const handleCoverError = (event: Event, item: any) => {
       </div>
     </header>
 
-    <div class="content-area">
+    <div class="content-area" @contextmenu="showLayoutContextMenu">
       <div v-if="filteredItems.length === 0" class="empty-state">
         <div class="empty-text">
           {{ searchKeyword ? '没有找到匹配的项目' : '书架空空如也' }}
@@ -1398,6 +1550,8 @@ const handleCoverError = (event: Event, item: any) => {
                   <span v-if="selectedBooks.has(item.id)">✓</span>
                 </div>
                 
+                <div v-if="item.readStatus === 'read'" class="read-status">已读</div>
+                
                 <div v-if="!isSelectMode && downloadingBooks.has(getBookKey(item))" class="download-status downloading">
                   <div class="loading-ring">
                     <div class="loading-ring-progress"></div>
@@ -1425,6 +1579,7 @@ const handleCoverError = (event: Event, item: any) => {
     <div 
       v-show="contextMenu.show" 
       class="context-menu"
+      :class="{ 'is-left': contextMenu.isLeft }"
       ref="contextMenuRef"
       :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }"
       @click.stop
@@ -1445,6 +1600,10 @@ const handleCoverError = (event: Event, item: any) => {
         打开当前位置
       </button>
       
+      <button class="context-menu-item" @click="handleToggleReadStatus">
+        {{ getReadStatusText() }}
+      </button>
+      
       <button class="context-menu-item danger" @click="handleContextMenuDelete">
         删除书籍
       </button>
@@ -1454,6 +1613,7 @@ const handleCoverError = (event: Event, item: any) => {
     <div 
       v-show="groupContextMenu.show" 
       class="context-menu"
+      :class="{ 'is-left': groupContextMenu.isLeft }"
       ref="contextMenuRef"
       :style="{ left: groupContextMenu.x + 'px', top: groupContextMenu.y + 'px' }"
       @click.stop
@@ -1465,6 +1625,66 @@ const handleCoverError = (event: Event, item: any) => {
       <button class="context-menu-item danger" @click="handleContextMenuDeleteGroup">
         删除分组
       </button>
+    </div>
+    
+    <!-- 书架布局右键菜单 -->
+    <div 
+      v-show="layoutContextMenu.show" 
+      class="context-menu"
+      :class="{ 'is-left': layoutContextMenu.isLeft }"
+      ref="layoutContextMenuRef"
+      :style="{ left: layoutContextMenu.x + 'px', top: layoutContextMenu.y + 'px' }"
+      @click.stop
+    >
+      <div class="context-menu-item has-submenu" @mouseenter="activeSubMenu = 'columns'" @mouseleave="activeSubMenu = null">
+        <span>列数</span>
+        <span class="submenu-arrow">▶</span>
+        <div v-show="activeSubMenu === 'columns'" class="context-submenu">
+          <button 
+            v-for="col in columnOptions" 
+            :key="col" 
+            class="context-menu-item"
+            :class="{ checked: settingsStore.bookshelfColumns === col }"
+            @click="handleSetColumns(col)"
+          >
+            {{ col }}列
+          </button>
+        </div>
+      </div>
+      
+      <div class="context-menu-item has-submenu" @mouseenter="activeSubMenu = 'gap'" @mouseleave="activeSubMenu = null">
+        <span>封面间距</span>
+        <span class="submenu-arrow">▶</span>
+        <div v-show="activeSubMenu === 'gap'" class="context-submenu">
+          <button 
+            v-for="g in gapOptions" 
+            :key="g" 
+            class="context-menu-item"
+            :class="{ checked: settingsStore.coverGap === g }"
+            @click="handleSetGap(g)"
+          >
+            {{ g }}px
+          </button>
+        </div>
+      </div>
+      
+      <div class="context-menu-divider"></div>
+      
+      <div class="context-menu-item has-submenu" @mouseenter="activeSubMenu = 'sort'" @mouseleave="activeSubMenu = null">
+        <span>排序</span>
+        <span class="submenu-arrow">▶</span>
+        <div v-show="activeSubMenu === 'sort'" class="context-submenu">
+          <button 
+            v-for="s in sortOptions" 
+            :key="s.value" 
+            class="context-menu-item"
+            :class="{ checked: settingsStore.sortBy === s.value }"
+            @click="handleSetSort(s.value)"
+          >
+            {{ s.label }}
+          </button>
+        </div>
+      </div>
     </div>
     
     <!-- 创建分组对话框 -->
@@ -1597,7 +1817,10 @@ const handleCoverError = (event: Event, item: any) => {
             @click="handleBatchDownload" 
             :disabled="selectedBooks.size === 0 || isDownloading"
           >
-            <DownloadIcon :size="16" />下载
+            下载
+          </button>
+          <button class="btn secondary" @click="handleBatchToggleRead" :disabled="selectedBooks.size === 0">
+            {{ batchReadStatusText }}
           </button>
           <button class="btn danger" @click="handleBatchDelete" :disabled="selectedBooks.size === 0">
             删除
@@ -2072,7 +2295,7 @@ const handleCoverError = (event: Event, item: any) => {
 .book-card {
   display: flex;
   flex-direction: column;
-  cursor: grab;
+  cursor: pointer;
   position: relative;
   border-radius: var(--radius-xl);
   user-select: none;
@@ -2080,7 +2303,7 @@ const handleCoverError = (event: Event, item: any) => {
 }
 
 .book-card:active {
-  cursor: grabbing;
+  cursor: pointer;
 }
 
 .book-card.dragging {
@@ -2276,6 +2499,19 @@ const handleCoverError = (event: Event, item: any) => {
   background: linear-gradient(135deg, var(--primary-color) 0%, var(--accent-color) 100%);
   color: white;
   transform: scale(1.15);
+}
+
+.read-status {
+  position: absolute;
+  top: 12px;
+  right: 0;
+  padding: 6px 15px;
+  border-radius: 20px 0 0 20px;
+  background: linear-gradient(135deg, var(--primary-color) 0%, var(--accent-color) 100%);
+  font-size: 0.78rem;
+  color: white;
+  font-weight: 600;
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.5);
 }
 
 /* 下载状态图标 */
@@ -2491,6 +2727,46 @@ const handleCoverError = (event: Event, item: any) => {
   transform: translateY(-1px);
 }
 
+/* 状态菜单 */
+.status-menu-container {
+  position: relative;
+}
+
+.status-menu {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  margin-bottom: 8px;
+  background: var(--sidebar-bg);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  z-index: 100;
+  border: 1px solid var(--border-color);
+}
+
+.status-menu-item {
+  padding: 8px 20px;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 0.85rem;
+  font-weight: 500;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.status-menu-item:hover {
+  background: var(--primary-light);
+  color: var(--primary-color);
+}
+
 /* 滚动条美化 */
 .content-area::-webkit-scrollbar {
   width: 6px;
@@ -2543,6 +2819,60 @@ const handleCoverError = (event: Event, item: any) => {
 .context-menu-item.danger:hover {
   background: rgba(239, 68, 68, 0.1);
   color: var(--danger-color, #EF4444);
+}
+
+.context-menu-item.has-submenu {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.submenu-arrow {
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  transition: transform var(--transition-fast);
+}
+
+.context-menu-item.has-submenu:hover .submenu-arrow {
+  color: var(--primary-color);
+}
+
+.context-submenu {
+  position: absolute;
+  top: 0;
+  left: 100%;
+  margin-left: 4px;
+  min-width: 120px;
+  padding: 4px 0;
+  background: var(--bg-color);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+  z-index: 1001;
+}
+
+.context-menu.is-left .context-submenu {
+  left: auto;
+  right: 100%;
+  margin-left: 0;
+  margin-right: 4px;
+}
+
+.context-menu-divider {
+  height: 1px;
+  background: var(--border-color);
+  margin: 4px 0;
+}
+
+.context-menu-item.checked {
+  color: var(--primary-color);
+  font-weight: 600;
+}
+
+.context-menu-item.checked::before {
+  content: '✓';
+  margin-right: 8px;
+  color: var(--primary-color);
 }
 
 </style>

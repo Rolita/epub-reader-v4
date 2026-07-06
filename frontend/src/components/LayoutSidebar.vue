@@ -12,6 +12,7 @@ const fontFamilies = [
   { value: 'Source Han Serif SC Light', label: '思源宋体 Light' },
   { value: 'Source Han Serif SC Medium', label: '思源宋体 Medium' },
   { value: 'LXGW WenKai Medium', label: '霞鹜文楷 Medium' },
+  { value: 'Microsoft YaHei', label: '微软雅黑' },
 ];
 
 const textAligns = [

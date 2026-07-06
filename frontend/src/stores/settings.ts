@@ -28,6 +28,8 @@ export const useSettingsStore = defineStore('settings', () => {
   const showHeader = ref(true);        // 是否显示页眉
   const showIllustrationSidebar = ref(false); // 是否显示插画侧边栏
   const illustrations = ref<IllustrationItem[]>([]); // 当前书籍的插图列表
+  const windowWidth = ref(1920);       // 启动窗口宽度
+  const windowHeight = ref(1080);      // 启动窗口高度
 
   const setIllustrations = (items: IllustrationItem[]) => {
     illustrations.value = items;
@@ -52,6 +54,8 @@ export const useSettingsStore = defineStore('settings', () => {
     showHeader,
     showIllustrationSidebar,
     illustrations,
+    windowWidth,
+    windowHeight,
     setIllustrations,
     clearIllustrations
   };

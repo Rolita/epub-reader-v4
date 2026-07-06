@@ -6,6 +6,8 @@ export interface Shelf {
   name: string
 }
 
+export type ReadStatus = 'unread' | 'read'
+
 export interface Book {
   id: string
   shelfId: string
@@ -16,6 +18,7 @@ export interface Book {
   md5?: string
   filePath?: string
   order: number
+  readStatus?: ReadStatus
 }
 
 export interface Group {
@@ -438,6 +441,17 @@ export const useLibraryStore = defineStore('library', () => {
     return false
   }
 
+  // 更新书籍信息
+  async function updateBook(updatedBook: Book) {
+    const index = currentBooks.value.findIndex(b => b.id === updatedBook.id)
+    if (index !== -1) {
+      currentBooks.value[index] = { ...currentBooks.value[index], ...updatedBook }
+      await saveBooks()
+      return true
+    }
+    return false
+  }
+
   // 将书籍移到书架最前面（最近使用排序）
   async function moveBookToFront(bookId: string) {
     const index = currentBooks.value.findIndex(b => b.id === bookId)
@@ -475,6 +489,7 @@ export const useLibraryStore = defineStore('library', () => {
     addBook,
     deleteBook,
     updateBookTitle,
+    updateBook,
     moveBookToFront,
     reorderBook,
     loadShelfBooks,

@@ -92,7 +92,7 @@ const handleCoverError = (event: Event, index: number) => {
 .group-card {
   display: flex;
   flex-direction: column;
-  cursor: grab;
+  cursor: pointer;
   position: relative;
   border-radius: var(--radius-xl);
   user-select: none;
@@ -100,7 +100,7 @@ const handleCoverError = (event: Event, index: number) => {
 }
 
 .group-card:active {
-  cursor: grabbing;
+  cursor: pointer;
 }
 
 .group-card.dragging {

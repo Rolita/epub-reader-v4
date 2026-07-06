@@ -90,6 +90,10 @@ export function GetWebDAVLogs() {
   return window['go']['main']['App']['GetWebDAVLogs']();
 }
 
+export function GetWindowSize() {
+  return window['go']['main']['App']['GetWindowSize']();
+}
+
 export function LoadShelfData(arg1) {
   return window['go']['main']['App']['LoadShelfData'](arg1);
 }
@@ -144,6 +148,10 @@ export function SaveShelfOrder(arg1) {
 
 export function SaveWebDavConfig(arg1, arg2) {
   return window['go']['main']['App']['SaveWebDavConfig'](arg1, arg2);
+}
+
+export function SaveWindowSize(arg1, arg2) {
+  return window['go']['main']['App']['SaveWindowSize'](arg1, arg2);
 }
 
 export function ScanEpubFilesInFolder(arg1) {

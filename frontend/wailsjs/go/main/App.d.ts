@@ -48,6 +48,8 @@ export function GetShelfDir():Promise<string>;
 
 export function GetWebDAVLogs():Promise<Array<webdav.LogEntry>>;
 
+export function GetWindowSize():Promise<string>;
+
 export function LoadShelfData(arg1:string):Promise<string>;
 
 export function LoadWebDavConfig(arg1:string):Promise<string>;
@@ -75,6 +77,8 @@ export function SaveShelfData(arg1:string,arg2:string):Promise<void>;
 export function SaveShelfOrder(arg1:Array<string>):Promise<void>;
 
 export function SaveWebDavConfig(arg1:string,arg2:string):Promise<void>;
+
+export function SaveWindowSize(arg1:number,arg2:number):Promise<void>;
 
 export function ScanEpubFilesInFolder(arg1:string):Promise<Array<string>>;
 

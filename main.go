@@ -2,6 +2,7 @@ package main
 
 import (
 	"embed"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -185,6 +186,33 @@ func (h *LocalFileHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, path)
 }
 
+func loadWindowSize() (int, int) {
+	defaultWidth, defaultHeight := 1920, 1080
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		return defaultWidth, defaultHeight
+	}
+	path := filepath.Join(configDir, "my-epub-reader", "window_size.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return defaultWidth, defaultHeight
+	}
+	var config struct {
+		Width  int `json:"width"`
+		Height int `json:"height"`
+	}
+	if err := json.Unmarshal(data, &config); err != nil {
+		return defaultWidth, defaultHeight
+	}
+	if config.Width < 800 {
+		config.Width = 800
+	}
+	if config.Height < 600 {
+		config.Height = 600
+	}
+	return config.Width, config.Height
+}
+
 func main() {
 	logFile, err := os.Create(filepath.Join(os.TempDir(), "epub-reader-debug.log"))
 	if err != nil {
@@ -224,10 +252,13 @@ func main() {
 	epubImageHandler := &EpubImageHandler{app: app}
 	localFileHandler := &LocalFileHandler{}
 
+	windowWidth, windowHeight := loadWindowSize()
+	log.Printf("Window size loaded: %dx%d\n", windowWidth, windowHeight)
+
 	runErr := wails.Run(&options.App{
 		Title:     "EPUB Reader",
-		Width:     1920,
-		Height:    1080,
+		Width:     windowWidth,
+		Height:    windowHeight,
 		Frameless: true,
 		AssetServer: &assetserver.Options{
 			Assets: assets,

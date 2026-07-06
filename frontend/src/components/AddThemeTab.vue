@@ -13,6 +13,7 @@
               v-model="themeName" 
               placeholder="例如：墨韵龙鳞"
               class="form-input"
+              @keydown.enter.prevent="handleSave"
             />
           </div>
           

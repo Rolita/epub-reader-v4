@@ -362,6 +362,41 @@ const handleBatchDelete = async () => {
   )
 }
 
+// 计算批量操作的状态文本
+const batchReadStatusText = computed(() => {
+  let hasRead = false
+  let hasUnread = false
+  
+  for (const bookId of selectedBooks.value) {
+    const book = books.value.find((b: any) => b.id === bookId)
+    if (book?.readStatus === 'read') {
+      hasRead = true
+    } else {
+      hasUnread = true
+    }
+    
+    if (hasRead && hasUnread) break
+  }
+  
+  if (hasRead && !hasUnread) return '未读'
+  return '已读'
+})
+
+// 批量切换阅读状态
+const handleBatchToggleRead = async () => {
+  if (selectedBooks.value.size === 0) return
+  
+  const targetStatus = batchReadStatusText.value === '已读' ? 'read' : 'unread'
+  
+  for (const bookId of selectedBooks.value) {
+    const book = books.value.find((b: any) => b.id === bookId)
+    if (book) {
+      book.readStatus = targetStatus
+      await store.updateBook(book)
+    }
+  }
+}
+
 // 批量移出分组
 const handleBatchRemoveFromGroup = async () => {
   if (selectedBooks.value.size === 0) return
@@ -752,6 +787,29 @@ const closeContextMenu = () => {
   contextMenu.value.show = false
 }
 
+// 获取当前书籍的阅读状态文本
+const getReadStatusText = () => {
+  if (!contextMenu.value.bookId) return '标记状态'
+  const book = books.value.find((b: any) => b.id === contextMenu.value.bookId)
+  return book?.readStatus === 'read' ? '标记为未读' : '标记为已读'
+}
+
+// 切换阅读状态
+const handleToggleReadStatus = async () => {
+  if (!contextMenu.value.bookId) return
+  
+  const book = books.value.find((b: any) => b.id === contextMenu.value.bookId)
+  if (!book) {
+    closeContextMenu()
+    return
+  }
+  
+  book.readStatus = book.readStatus === 'read' ? 'unread' : 'read'
+  
+  await store.updateBook(book)
+  closeContextMenu()
+}
+
 const handleContextMenuDelete = async () => {
   if (!contextMenu.value.bookId) return
   
@@ -994,6 +1052,8 @@ const handleClickOutsideContextMenu = (event: MouseEvent) => {
                 <span v-if="selectedBooks.has(book.id)">✓</span>
               </div>
               
+              <div v-if="book.readStatus === 'read'" class="read-status">已读</div>
+              
               <div v-if="!isSelectMode && downloadingBooks.has(getBookKey(book))" class="download-status downloading">
                   <span class="spinner">⏳</span>
                 </div>
@@ -1038,6 +1098,10 @@ const handleClickOutsideContextMenu = (event: MouseEvent) => {
         打开当前位置
       </button>
       
+      <button class="context-menu-item" @click="handleToggleReadStatus">
+        {{ getReadStatusText() }}
+      </button>
+      
       <button class="context-menu-item danger" @click="handleContextMenuDelete">
         删除书籍
       </button>
@@ -1073,6 +1137,9 @@ const handleClickOutsideContextMenu = (event: MouseEvent) => {
             :disabled="selectedBooks.size === 0"
           >
             移动到分组
+          </button>
+          <button class="btn secondary" @click="handleBatchToggleRead" :disabled="selectedBooks.size === 0">
+            {{ batchReadStatusText }}
           </button>
           <button class="btn danger" @click="handleBatchDelete" :disabled="selectedBooks.size === 0">
             删除
@@ -1466,7 +1533,7 @@ const handleClickOutsideContextMenu = (event: MouseEvent) => {
 .book-card {
   display: flex;
   flex-direction: column;
-  cursor: grab;
+  cursor: pointer;
   position: relative;
   border-radius: var(--radius-xl);
   user-select: none;
@@ -1474,7 +1541,7 @@ const handleClickOutsideContextMenu = (event: MouseEvent) => {
 }
 
 .book-card:active {
-  cursor: grabbing;
+  cursor: pointer;
 }
 
 .book-card.dragging {
@@ -1599,6 +1666,19 @@ const handleClickOutsideContextMenu = (event: MouseEvent) => {
   background: linear-gradient(135deg, var(--primary-color) 0%, var(--accent-color) 100%);
   color: white;
   transform: scale(1.15);
+}
+
+.read-status {
+  position: absolute;
+  top: 12px;
+  right: 0;
+  padding: 6px 15px;
+  border-radius: 20px 0 0 20px;
+  background: linear-gradient(135deg, var(--primary-color) 0%, var(--accent-color) 100%);
+  font-size: 0.78rem;
+  color: white;
+  font-weight: 600;
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.5);
 }
 
 .download-status {
@@ -1791,6 +1871,46 @@ const handleClickOutsideContextMenu = (event: MouseEvent) => {
 
 .action-bar-buttons .btn.secondary:active {
   transform: translateY(-1px);
+}
+
+/* 状态菜单 */
+.status-menu-container {
+  position: relative;
+}
+
+.status-menu {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  margin-bottom: 8px;
+  background: var(--sidebar-bg);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  z-index: 100;
+  border: 1px solid var(--border-color);
+}
+
+.status-menu-item {
+  padding: 8px 20px;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 0.85rem;
+  font-weight: 500;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.status-menu-item:hover {
+  background: var(--primary-light);
+  color: var(--primary-color);
 }
 
 .content-area::-webkit-scrollbar {
