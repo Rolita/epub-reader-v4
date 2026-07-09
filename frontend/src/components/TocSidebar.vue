@@ -49,7 +49,9 @@ const handleItemClick = (item: TocItem) => {
     
     <div class="toc-content">
       <div v-if="bookStore.toc.length === 0" class="empty-state">
+        <ListIcon :size="48" style="opacity: 0.3; margin-bottom: 12px;" />
         <span>暂无目录</span>
+        <p style="font-size: 0.8rem; color: var(--text-muted); margin-top: 8px;">请打开一本EPUB书籍以查看目录</p>
       </div>
       
       <ul v-else class="toc-list">
@@ -222,6 +224,7 @@ const handleItemClick = (item: TocItem) => {
 /* 空状态 */
 .empty-state {
   display: flex;
+  flex-direction: column; /* Changed to column */
   align-items: center;
   justify-content: center;
   height: 100%;

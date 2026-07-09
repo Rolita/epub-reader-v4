@@ -99,6 +99,50 @@ const handleCancelEditShelf = () => {
 const draggedIndex = ref<number | null>(null)
 const dragOverIndex = ref<number | null>(null)
 
+// 展开的书架
+const expandedShelves = ref<Set<string>>(new Set())
+
+// 书籍分类
+interface BookCategoryItem {
+  id: string
+  name: string
+  key: 'recent' | 'read' | 'unread' | 'favorite'
+}
+
+const bookCategories: BookCategoryItem[] = [
+  { id: 'recent', name: '最近阅读', key: 'recent' },
+  { id: 'read', name: '已读', key: 'read' },
+  { id: 'unread', name: '未读', key: 'unread' },
+  { id: 'favorite', name: '收藏', key: 'favorite' }
+]
+
+// 获取书籍分类的计数
+const getCategoryCount = (categoryKey: string) => {
+  switch (categoryKey) {
+    case 'recent':
+      return store.recentBooks.length
+    case 'read':
+      return store.readBooks.length
+    case 'unread':
+      return store.unreadBooks.length
+    case 'favorite':
+      return store.favoriteBooks.length
+    default:
+      return 0
+  }
+}
+
+// 检查书架是否展开
+const isShelfExpanded = (shelfId: string) => {
+  return expandedShelves.value.has(shelfId)
+}
+
+// 点击书籍分类
+const handleCategoryClick = (categoryKey: 'recent' | 'read' | 'unread' | 'favorite' | null, event: Event) => {
+  event.stopPropagation()
+  store.setActiveBookCategory(categoryKey)
+}
+
 // 拖拽开始
 const handleDragStart = (event: DragEvent, index: number) => {
   draggedIndex.value = index
@@ -137,7 +181,27 @@ const handleDragEnd = () => {
 
 // 点击书架
 const handleShelfClick = (shelfId: string, shelfName: string) => {
-  store.setActiveShelf(shelfId)
+  // 如果书架已经激活
+  if (store.activeShelfId === shelfId) {
+    // 如果当前在子菜单（有选择分类），只重置为显示全部，不切换展开状态
+    if (store.activeBookCategory !== null) {
+      store.setActiveBookCategory(null)
+    } else {
+      // 如果已经在显示全部，切换展开/收起状态
+      const newExpanded = new Set(expandedShelves.value)
+      if (newExpanded.has(shelfId)) {
+        newExpanded.delete(shelfId)
+      } else {
+        newExpanded.add(shelfId)
+      }
+      expandedShelves.value = newExpanded
+    }
+  } else {
+    // 激活新书架，清空所有展开状态
+    store.setActiveShelf(shelfId)
+    store.setActiveBookCategory(null)
+    expandedShelves.value = new Set()
+  }
   emit('open-shelf', shelfId, shelfName)
 }
 
@@ -188,29 +252,52 @@ const handleDeleteShelf = (id: string) => {
         <li 
           v-for="(shelf, index) in store.shelves" 
           :key="shelf.id"
-          :class="[
-            'shelf-item', 
-            { 
-              active: store.activeShelfId === shelf.id,
-              dragging: draggedIndex === index,
-              'drag-over': dragOverIndex === index
-            }
-          ]"
-          draggable="true"
-          @dragstart="handleDragStart($event, index)"
-          @dragenter="handleDragEnter($event, index)"
-          @dragover="handleDragOver"
-          @dragleave="handleDragLeave"
-          @dragend="handleDragEnd"
-          @drop="handleDrop($event, index)"
-          @click="handleShelfClick(shelf.id, shelf.name)"
+          class="shelf-container"
         >
-          <span class="drag-handle" title="拖拽排序">⋮⋮</span>
-          <span class="shelf-name">{{ shelf.name }}</span>
-          <div class="shelf-actions">
-            <button class="action-btn edit" @click.stop="handleEditShelf(shelf.id, shelf.name)">✎</button>
-            <button class="action-btn delete" @click.stop="handleDeleteShelf(shelf.id)">✖</button>
+          <div 
+            :class="[
+              'shelf-item', 
+              { 
+                active: store.activeShelfId === shelf.id,
+                dragging: draggedIndex === index,
+                'drag-over': dragOverIndex === index
+              }
+            ]"
+            draggable="true"
+            @dragstart="handleDragStart($event, index)"
+            @dragenter="handleDragEnter($event, index)"
+            @dragover="handleDragOver"
+            @dragleave="handleDragLeave"
+            @dragend="handleDragEnd"
+            @drop="handleDrop($event, index)"
+            @click="handleShelfClick(shelf.id, shelf.name)"
+          >
+            <span class="drag-handle" title="拖拽排序">⋮⋮</span>
+            <span class="shelf-name">{{ shelf.name }}</span>
+            <div class="shelf-actions">
+              <button class="action-btn edit" @click.stop="handleEditShelf(shelf.id, shelf.name)">✎</button>
+              <button class="action-btn delete" @click.stop="handleDeleteShelf(shelf.id)">✖</button>
+            </div>
           </div>
+          
+          <!-- 子菜单：书籍分类 -->
+          <ul 
+            v-if="store.activeShelfId === shelf.id && isShelfExpanded(shelf.id)" 
+            class="category-list"
+          >
+            <li 
+              v-for="category in bookCategories" 
+              :key="category.id"
+              :class="[
+                'category-item',
+                { active: store.activeBookCategory === category.key }
+              ]"
+              @click="handleCategoryClick(category.key, $event)"
+            >
+              <span class="category-name">{{ category.name }}</span>
+              <span class="category-count">{{ getCategoryCount(category.key) }}</span>
+            </li>
+          </ul>
         </li>
       </ul>
     </div>
@@ -359,6 +446,11 @@ const handleDeleteShelf = (id: string) => {
   transform: scale(1.05);
 }
 
+/* 书架容器 */
+.shelf-container {
+  margin-bottom: 6px;
+}
+
 /* 书架列表 */
 .shelf-list {
   list-style: none;
@@ -424,10 +516,6 @@ const handleDeleteShelf = (id: string) => {
   margin-top: -3px;
   background: var(--primary-light);
 }
-
-.shelf-item:active {
-}
-
 /* 拖拽手柄 */
 .drag-handle {
   color: var(--text-muted);
@@ -522,5 +610,108 @@ const handleDeleteShelf = (id: string) => {
 
 .shelves-area::-webkit-scrollbar-thumb:hover {
   background: var(--text-muted);
+}
+
+/* 分类列表 */
+.category-list {
+  list-style: none;
+  padding: 8px 0 8px 28px;
+  margin: 0;
+  position: relative;
+}
+
+.category-list::before {
+  content: '';
+  position: absolute;
+  left: 12px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: linear-gradient(to bottom, transparent, var(--border-color), transparent);
+}
+
+/* 分类项 */
+.category-item {
+  padding: 10px 14px;
+  margin-bottom: 6px;
+  border-radius: var(--radius-lg);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  transition: all var(--transition-normal);
+  font-size: 0.85rem;
+  position: relative;
+  background: transparent;
+}
+
+.category-item::before {
+  content: '';
+  position: absolute;
+  left: -18px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--border-color);
+  transition: all var(--transition-fast);
+}
+
+.category-item:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+.category-item:hover::before {
+  background: var(--primary-color);
+  transform: translateY(-50%) scale(1.2);
+}
+
+.category-item.active::before {
+  background: var(--primary-color);
+  transform: translateY(-50%) scale(1.4);
+  box-shadow: 0 0 8px rgba(99, 102, 241, 0.4);
+}
+
+.category-name {
+  color: var(--text-secondary);
+  font-weight: 400;
+  transition: all var(--transition-fast);
+}
+
+.category-item:hover .category-name {
+  color: var(--text-color);
+}
+
+.category-item.active .category-name {
+  color: var(--primary-color);
+  font-weight: 600;
+}
+
+.category-count {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  background: rgba(0, 0, 0, 0.04);
+  padding: 4px 10px;
+  border-radius: 10px;
+  min-width: 22px;
+  text-align: center;
+  font-weight: 600;
+  transition: all var(--transition-fast);
+  line-height: 1;
+  letter-spacing: 0.02em;
+}
+
+.category-item:hover .category-count {
+  background: rgba(0, 0, 0, 0.08);
+  color: var(--text-color);
+  transform: scale(1.05);
+}
+
+.category-item.active .category-count {
+  background: linear-gradient(135deg, var(--primary-color) 0%, var(--accent-color) 100%);
+  color: white;
+  box-shadow: 0 2px 10px rgba(99, 102, 241, 0.25);
+  transform: scale(1.05);
 }
 </style>

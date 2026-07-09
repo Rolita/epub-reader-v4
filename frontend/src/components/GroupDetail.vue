@@ -888,6 +888,25 @@ const handleOpenFileLocation = async () => {
   }
 }
 
+// 获取当前书籍的收藏状态文本
+const getFavoriteStatusText = () => {
+  if (!contextMenu.value.bookId) return '收藏'
+  const book = books.value.find((b: any) => b.id === contextMenu.value.bookId)
+  return book?.isFavorite ? '取消收藏' : '收藏'
+}
+
+// 切换收藏状态
+const handleToggleFavorite = async () => {
+  if (!contextMenu.value.bookId) return
+  
+  const book = books.value.find((b: any) => b.id === contextMenu.value.bookId)
+  if (book) {
+    await store.toggleFavorite(book.id)
+  }
+  
+  closeContextMenu()
+}
+
 // 重命名相关状态
 const isRenaming = ref(false)
 const renamingBookId = ref('')
@@ -1081,7 +1100,7 @@ const handleClickOutsideContextMenu = (event: MouseEvent) => {
                 </div>
             </div>
           </div>
-          <div class="title">{{ book.title }}</div>
+          <div class="title" :class="{ favorite: book.isFavorite }">{{ book.title }}</div>
         </div>
       </div>
     </div>
@@ -1099,6 +1118,10 @@ const handleClickOutsideContextMenu = (event: MouseEvent) => {
       
       <button class="context-menu-item" @click="startRenameBook">
         重命名
+      </button>
+
+      <button class="context-menu-item" @click="handleToggleFavorite">
+        {{ getFavoriteStatusText() }}
       </button>
 
       <button class="context-menu-item" @click="handleContextMenuMoveToGroup">
@@ -1335,7 +1358,7 @@ const handleClickOutsideContextMenu = (event: MouseEvent) => {
   outline: none;
   background: var(--bg-color);
   color: var(--text-color);
-  width: 260px;
+  width: 320px;
   font-size: 0.9rem;
   transition: all var(--transition-normal);
   font-weight: 400;
@@ -1345,7 +1368,6 @@ const handleClickOutsideContextMenu = (event: MouseEvent) => {
 .search-input:focus {
   border-color: var(--primary-color);
   box-shadow: 0 0 0 4px var(--primary-light);
-  width: 320px;
 }
 
 .search-input::placeholder {
@@ -1636,17 +1658,40 @@ const handleClickOutsideContextMenu = (event: MouseEvent) => {
 }
 
 .title {
-  font-size: 0.82rem;
-  color: var(--text-secondary);
+  font-size: 0.87rem;
+  color: var(--text-color);
   text-align: center;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  padding: 0px 8px 0px;
+  line-height: 1.45;
+  overflow: hidden;
+  min-height: calc(0.87rem * 1.45 * 2);
+  /* WebKit 内核（Chrome/Edge/Safari） */
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
-  overflow: hidden;
-  font-weight: 400;
-  letter-spacing: 0;
-  padding: 0 2px;
-  line-height: 1.4;
+  /* W3C 标准属性（Firefox 等，消除编辑器警告） */
+  display: box;
+  line-clamp: 2;
+  box-orient: vertical;
+}
+
+.title.favorite {
+  color: color-mix(in srgb, var(--primary-color) 50%, var(--accent-color) 50%);
+  font-weight: 600;
+  animation: favoritePulse 4s ease-in-out infinite;
+  text-shadow: 0 0 8px rgba(79, 70, 229, 0.2);
+}
+
+@keyframes favoritePulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.8;
+    text-shadow: 0 0 12px rgba(79, 70, 229, 0.4);
+  }
 }
 
 .book-card.select-mode {
@@ -1831,7 +1876,7 @@ const handleClickOutsideContextMenu = (event: MouseEvent) => {
   padding: 8px 18px;
   border-radius: var(--radius-lg);
   font-weight: 600;
-  font-size: 0.85rem;
+  font-size: 0.87rem;
   transition: all var(--transition-normal);
   letter-spacing: -0.01em;
   position: relative;
@@ -1926,7 +1971,7 @@ const handleClickOutsideContextMenu = (event: MouseEvent) => {
   border: none;
   background: transparent;
   color: var(--text-primary);
-  font-size: 0.85rem;
+  font-size: 0.87rem;
   font-weight: 500;
   border-radius: var(--radius-md);
   cursor: pointer;
@@ -1975,7 +2020,7 @@ const handleClickOutsideContextMenu = (event: MouseEvent) => {
   border: none;
   background: transparent;
   color: var(--text-primary);
-  font-size: 0.85rem;
+  font-size: 0.87rem;
   font-weight: 500;
   text-align: left;
   cursor: pointer;
@@ -2093,7 +2138,7 @@ const handleClickOutsideContextMenu = (event: MouseEvent) => {
 
 .group-count {
   color: var(--text-muted);
-  font-size: 0.85rem;
+  font-size: 0.87rem;
 }
 
 /* 分组创建按钮 */

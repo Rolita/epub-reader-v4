@@ -41,6 +41,7 @@ import IllustrationSidebar from './IllustrationSidebar.vue';
 import BookmarksSidebar from './BookmarksSidebar.vue';
 import TranslateSidebar from './TranslateSidebar.vue';
 import SearchSidebar from './SearchSidebar.vue';
+import NotesSidebar from './NotesSidebar.vue';
 import { useSettingsStore } from '../stores/settings';
 
 const settingsStore = useSettingsStore();
@@ -161,6 +162,12 @@ const switchView = (viewName: string) => {
       highlightSearchKeyword: props.highlightSearchKeyword,
       clearSearchHighlight: props.clearSearchHighlight
     };
+    settingsStore.showIllustrationSidebar = false;
+  }
+  if (viewName === 'notes') {
+    currentComponent.value = NotesSidebar;
+    componentKey.value = 'notes';
+    componentProps.value = {}; // No props needed for now
     settingsStore.showIllustrationSidebar = false;
   }
   if (viewName === 'none') {

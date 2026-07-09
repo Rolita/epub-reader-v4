@@ -118,18 +118,29 @@ const sortItems = (items: any[]) => {
   })
 }
 
+// 计算要显示的项目（根据书籍分类）
+const displayItems = computed(() => {
+  // 如果选中了书籍分类，只显示该分类的书籍（不显示分组）
+  if (store.activeBookCategory) {
+    return store.filteredBooks.map(book => ({ ...book, type: 'book' }))
+  }
+  // 否则显示所有根级项目（书籍 + 分组）
+  return rootItems.value
+})
+
 const filteredItems = computed(() => {
   if (!searchKeyword.value.trim()) {
-    return sortItems(rootItems.value)
+    return sortItems(displayItems.value)
   }
   
   const keyword = searchKeyword.value.toLowerCase().trim()
   const results: any[] = []
   const addedBookIds = new Set<string>()
   
-  rootItems.value.forEach(item => {
-    if (item.type === 'group') {
-      const name = (item.name || '').toLowerCase()
+  displayItems.value.forEach(item => {
+    if (item.type === 'group' && !store.activeBookCategory) {
+      const groupItem = item as any
+      const name = (groupItem.name || '').toLowerCase()
       if (name.includes(keyword)) {
         results.push(item)
       }
@@ -139,18 +150,19 @@ const filteredItems = computed(() => {
         const author = (book.author || '').toLowerCase()
         if (title.includes(keyword) || author.includes(keyword)) {
           if (!addedBookIds.has(book.id)) {
-            results.push({ ...book, type: 'book', inGroup: item.name })
+            results.push({ ...book, type: 'book', inGroup: groupItem.name })
             addedBookIds.add(book.id)
           }
         }
       })
-    } else {
-      const title = (item.title || '').toLowerCase()
-      const author = (item.author || '').toLowerCase()
+    } else if (item.type === 'book') {
+      const bookItem = item as any
+      const title = (bookItem.title || '').toLowerCase()
+      const author = (bookItem.author || '').toLowerCase()
       if (title.includes(keyword) || author.includes(keyword)) {
-        if (!addedBookIds.has(item.id)) {
+        if (!addedBookIds.has(bookItem.id)) {
           results.push(item)
-          addedBookIds.add(item.id)
+          addedBookIds.add(bookItem.id)
         }
       }
     }
@@ -785,6 +797,7 @@ const openBook = async (book: any) => {
     }
   }
   
+  store.updateBookLastReadTime(book.id)
   await store.moveBookToFront(book.id)
   
   emit('open-book', book)
@@ -1007,6 +1020,20 @@ const handleToggleReadStatus = async () => {
   }
   
   await store.updateBook(book)
+  closeContextMenu()
+}
+
+// 获取当前书籍的收藏状态文本
+const getFavoriteStatusText = () => {
+  if (!contextMenu.value.bookId) return '收藏'
+  const book = currentBooksOnly.value.find((b: any) => b.id === contextMenu.value.bookId)
+  return book?.isFavorite ? '取消收藏' : '收藏'
+}
+
+// 切换收藏状态
+const handleToggleFavorite = async () => {
+  if (!contextMenu.value.bookId) return
+  await store.toggleFavorite(contextMenu.value.bookId)
   closeContextMenu()
 }
 
@@ -1581,7 +1608,7 @@ const handleCoverError = (event: Event, item: any) => {
                 </div>
               </div>
             </div>
-            <div class="title">{{ item.title }}</div>
+            <div class="title" :class="{ 'favorite-title': item.isFavorite }">{{ item.title }}</div>
             <div v-if="item.inGroup" class="group-indicator">
               在「{{ item.inGroup }}」中
             </div>
@@ -1617,6 +1644,10 @@ const handleCoverError = (event: Event, item: any) => {
       
       <button class="context-menu-item" @click="handleToggleReadStatus">
         {{ getReadStatusText() }}
+      </button>
+      
+      <button class="context-menu-item" @click="handleToggleFavorite">
+        {{ getFavoriteStatusText() }}
       </button>
       
       <button class="context-menu-item danger" @click="handleContextMenuDelete">
@@ -1918,7 +1949,7 @@ const handleCoverError = (event: Event, item: any) => {
   outline: none;
   background: var(--bg-color);
   color: var(--text-color);
-  width: 260px;
+  width: 320px;
   font-size: 0.9rem;
   transition: all var(--transition-normal);
   font-weight: 400;
@@ -1928,7 +1959,6 @@ const handleCoverError = (event: Event, item: any) => {
 .search-input:focus {
   border-color: var(--primary-color);
   box-shadow: 0 0 0 4px var(--primary-light);
-  width: 320px;
 }
 
 .search-input::placeholder {
@@ -2266,7 +2296,7 @@ const handleCoverError = (event: Event, item: any) => {
 
 .group-count {
   color: var(--text-muted);
-  font-size: 0.85rem;
+  font-size: 0.87rem;
 }
 
 /* 分组创建按钮 */
@@ -2413,14 +2443,15 @@ const handleCoverError = (event: Event, item: any) => {
 
 /* 书名 */
 .title {
-  font-size: 0.82rem;
-  color: var(--text-secondary);
+  font-size: 0.87rem;
+  color: var(--text-color);
   text-align: center;
-  font-weight: 400;
-  letter-spacing: 0;
-  padding: 0 2px;
-  line-height: 1.4;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  padding: 0px 8px 0px;
+  line-height: 1.45;
   overflow: hidden;
+  min-height: calc(0.87rem * 1.45 * 2);
 
   /* WebKit 内核（Chrome/Edge/Safari） */
   display: -webkit-box;
@@ -2431,6 +2462,24 @@ const handleCoverError = (event: Event, item: any) => {
   display: box;
   line-clamp: 2;
   box-orient: vertical;
+}
+
+/* 收藏的书名 */
+.favorite-title {
+  color: color-mix(in srgb, var(--primary-color) 50%, var(--accent-color) 50%);
+  font-weight: 600;
+  animation: favoritePulse 4s ease-in-out infinite;
+  text-shadow: 0 0 8px rgba(79, 70, 229, 0.2);
+}
+
+@keyframes favoritePulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.8;
+    text-shadow: 0 0 12px rgba(79, 70, 229, 0.4);
+  }
 }
 
 /* 分组指示器 */
@@ -2685,7 +2734,7 @@ const handleCoverError = (event: Event, item: any) => {
   padding: 8px 18px;
   border-radius: var(--radius-lg);
   font-weight: 600;
-  font-size: 0.85rem;
+  font-size: 0.87rem;
   transition: all var(--transition-normal);
   letter-spacing: -0.01em;
   position: relative;
@@ -2780,7 +2829,7 @@ const handleCoverError = (event: Event, item: any) => {
   border: none;
   background: transparent;
   color: var(--text-primary);
-  font-size: 0.85rem;
+  font-size: 0.87rem;
   font-weight: 500;
   border-radius: var(--radius-md);
   cursor: pointer;
@@ -2831,7 +2880,7 @@ const handleCoverError = (event: Event, item: any) => {
   border: none;
   background: transparent;
   color: var(--text-primary);
-  font-size: 0.85rem;
+  font-size: 0.87rem;
   font-weight: 500;
   text-align: left;
   cursor: pointer;

@@ -210,16 +210,24 @@ const handleCoverError = (event: Event, index: number) => {
 
 
 .title {
-  font-size: 0.82rem;
-  color: var(--text-secondary);
+  font-size: 0.87rem;
+  color: var(--text-color);
   text-align: center;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  padding: 0px 8px 0px;
+  line-height: 1.45;
+  overflow: hidden;
+  min-height: calc(0.87rem * 1.45 * 2);
+
+  /* WebKit 内核（Chrome/Edge/Safari） */
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
-  overflow: hidden;
-  font-weight: 400;
-  letter-spacing: 0;
-  padding: 0 2px;
-  line-height: 1.4;
+
+  /* W3C 标准属性（Firefox 等，消除编辑器警告） */
+  display: box;
+  line-clamp: 2;
+  box-orient: vertical;
 }
 </style>

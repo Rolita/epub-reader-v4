@@ -3,22 +3,13 @@
     :width="size || 20"
     :height="size || 20"
     viewBox="0 0 24 24"
-    fill="none"
+    fill="currentColor"
     stroke="currentColor"
-    stroke-width="2"
-    stroke-linecap="round"
-    stroke-linejoin="round"
+    stroke-width="0"
     :class="className"
+    xmlns="http://www.w3.org/2000/svg"
   >
-    <polyline points="12 3 20 7 12 11"/>
-    <polyline points="12 13 20 17 12 21"/>
-    <line x1="4" y1="7" x2="4" y2="17"/>
-    <line x1="12" y1="3" x2="12" y2="5"/>
-    <line x1="12" y1="19" x2="12" y2="21"/>
-    <line x1="20" y1="7" x2="18" y2="5"/>
-    <line x1="20" y1="17" x2="18" y2="19"/>
-    <line x1="4" y1="7" x2="6" y2="5"/>
-    <line x1="4" y1="17" x2="6" y2="19"/>
+    <path d="M5 15V17C5 18.0544 5.81588 18.9182 6.85074 18.9945L7 19H10V21H7C4.79086 21 3 19.2091 3 17V15H5ZM18 10L22.4 21H20.245L19.044 18H14.954L13.755 21H11.601L16 10H18ZM17 12.8852L15.753 16H18.245L17 12.8852ZM8 2V4H12V11H8V14H6V11H2V4H6V2H8ZM17 3C19.2091 3 21 4.79086 21 7V9H19V7C19 5.89543 18.1046 5 17 5H14V3H17ZM6 6H4V9H6V6ZM10 6H8V9H10V6Z"/>
   </svg>
 </template>
 

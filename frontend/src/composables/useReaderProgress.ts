@@ -42,21 +42,38 @@ export async function saveReaderProgress(
 }
 
 /**
- * 恢复到指定 CFI 位置
+ * 恢复到指定 CFI 位置，或从存储中自动恢复
  * @param rendition epub.js rendition 实例
- * @param cfi EPUB CFI 位置标识
+ * @param cfi EPUB CFI 位置标识（可选，不提供则自动从存储恢复）
  * @param onFocus 可选的聚焦回调
+ * @param filePath 书籍文件路径（自动恢复时需要）
  */
 export async function restoreReaderProgress(
   rendition: any,
-  cfi: string,
-  onFocus?: () => void
+  cfi?: string | null,
+  onFocus?: () => void,
+  filePath?: string
 ): Promise<void> {
-  if (!rendition || !cfi) return
+  if (!rendition) return
+
   try {
-    await rendition.display(cfi)
-    onFocus?.()
-    console.log('已恢复到进度:', cfi)
+    let targetCfi = cfi
+    
+    // 如果没有提供 cfi，尝试从存储中获取
+    if (!targetCfi && filePath) {
+      // @ts-ignore
+      const progressJson = await window.go.main.App.GetProgress(filePath)
+      if (progressJson) {
+        const progress = JSON.parse(progressJson)
+        targetCfi = progress.cfi
+      }
+    }
+    
+    if (targetCfi) {
+      await rendition.display(targetCfi)
+      onFocus?.()
+      console.log('已恢复到进度:', targetCfi)
+    }
   } catch (err) {
     console.error('恢复进度失败:', err)
   }

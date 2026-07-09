@@ -136,6 +136,8 @@ let autoSaveTimer: any = null; // 自动保存进度定时器
 
 // 加载状态
 const isLoading = ref(true)
+// 标记是否正在初始化阅读器
+let isInitializing = false
 
 // 阅读进度
 const progress = ref(0)
@@ -527,8 +529,12 @@ const nextPage = () => {
 };
 
 const initReader = async () => {
-	try {
-		isLoading.value = true
+  if (isInitializing) {
+    return;
+  }
+  try {
+    isInitializing = true;
+    isLoading.value = true
 		
 		if (rendition) {
 			rendition.destroy();
@@ -734,11 +740,26 @@ const initReader = async () => {
       
       // 加载完成，隐藏加载动画
       isLoading.value = false
+      
+      // 如果当前 tab 是激活状态，确保内容正确显示
+      if (props.isActive && rendition) {
+        setTimeout(async () => {
+          rendition.resize('100%', '100%');
+          applyTypography();
+          applyTheme();
+          // 延迟 500ms 后触发恢复阅读进度
+          setTimeout(async () => {
+            await restoreReaderProgress(rendition, null, () => viewerContainer.value?.focus(), props.filePath);
+          }, 500);
+        }, 50);
+      }
     }
   } catch (err) {
     console.error("阅读器启动失败:", err);
     // 即使失败也要隐藏加载动画
     isLoading.value = false
+  } finally {
+    isInitializing = false;
   }
 };
 
@@ -1452,6 +1473,42 @@ watch(() => settingsStore.sidebarWidth, () => {
     })
   }
 })
+
+// 监听 tab 激活状态变化，确保切换回 tab 时阅读器内容正常显示
+watch(() => props.isActive, (newIsActive) => {
+  if (newIsActive) {
+    // 延迟执行，确保 DOM 已完全渲染
+    setTimeout(async () => {
+      if (isLoading.value || isInitializing) {
+        // 如果还在加载中，等待更长时间再检查
+        setTimeout(async () => {
+          if (rendition) {
+            rendition.resize('100%', '100%');
+            applyTypography();
+            applyTheme();
+            // 延迟 500ms 后触发恢复阅读进度
+            setTimeout(async () => {
+              await restoreReaderProgress(rendition, null, () => viewerContainer.value?.focus(), props.filePath);
+            }, 500);
+          }
+        }, 300);
+      } else if (rendition) {
+        rendition.resize('100%', '100%');
+        applyTypography();
+        applyTheme();
+        // 延迟 500ms 后触发恢复阅读进度
+        setTimeout(async () => {
+          await restoreReaderProgress(rendition, null, () => viewerContainer.value?.focus(), props.filePath);
+          // 如果有位置信息，确保显示正确的位置
+          if (book?.locations && book.locations.length > 0 && rendition?.location?.start?.cfi) {
+            // 确保内容正确渲染
+            rendition.display(rendition.location.start.cfi);
+          }
+        }, 500);
+      }
+    }, 100);
+  }
+});
 
 watch(() => props.filePath, async () => {
   await initReader();

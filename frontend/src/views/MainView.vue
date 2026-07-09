@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, watch, computed, onUnmounted, nextTick } from 'vue'
 import SidebarContainer from '../components/SidebarContainer.vue'
+import NotesSidebar from '../components/NotesSidebar.vue'
 import Bookshelf from '../components/Bookshelf.vue'
 import SettingsTab from '../components/SettingsTab.vue'
 import ReaderContent from '../components/ReaderContent.vue'
@@ -29,11 +30,14 @@ import SquareIcon from '../components/icons/SquareIcon.vue'
 import CloudIcon from '../components/icons/CloudIcon.vue'
 import DownloadIcon from '../components/icons/DownloadIcon.vue'
 import BookmarkIcon from '../components/icons/BookmarkIcon.vue'
+import NoteIcon from '../components/icons/NoteIcon.vue'
 import SaveIcon from '../components/icons/SaveIcon.vue'
 import LayoutGridIcon from '../components/icons/LayoutGridIcon.vue'
 import IllustrationIcon from '../components/icons/IllustrationIcon.vue'
 import TranslateIcon from '../components/icons/TranslateIcon.vue'
 import SearchIcon from '../components/icons/SearchIcon.vue'
+import SunIcon from '../components/icons/SunIcon.vue'
+import MoonIcon from '../components/icons/MoonIcon.vue'
 import { handleRestoreProgress as restoreProgressAction, handleSaveProgress as saveProgressAction } from '../composables/useProgressButtons'
 
 interface Tab {
@@ -62,6 +66,16 @@ const store = useLibraryStore()
 const settingsStore = useSettingsStore()
 const bookStore = useBookStore()
 const themeStore = useThemeStore()
+
+const isDarkTheme = computed(() => {
+  const bgColor = themeStore.themeColors.bg;
+  const r = parseInt(bgColor.slice(1, 3), 16);
+  const g = parseInt(bgColor.slice(3, 5), 16);
+  const b = parseInt(bgColor.slice(5, 7), 16);
+  const brightness = (r * 299 + g * 587 + b * 114) / 1000;
+  return brightness < 128;
+})
+
 const tabs = ref<Tab[]>([])
 let checkPendingEpubInterval: number | null = null
 
@@ -669,6 +683,9 @@ const openGroupTab = (group: any, paneId?: string) => {
 }
 
 const openReaderTab = async (book: any, targetPaneId?: string) => {
+  // 更新书籍最后阅读时间
+  store.updateBookLastReadTime(book.id)
+  
   const existingTab = tabs.value.find(t => t.type === 'reader' && t.bookId === book.id)
   
   if (existingTab) {
@@ -1331,7 +1348,10 @@ onUnmounted(() => {
           :class="{ active: activeSidebar === 'theme' }"
           @click="switchSidebar('theme')" 
           title="主题"
-        ><SparklesIcon :size="22" /></button>
+        >
+          <SunIcon v-if="!isDarkTheme" :size="22" />
+          <MoonIcon v-else :size="22" />
+        </button>
         <button 
           class="func-btn" 
           :class="{ active: activeSidebar === 'bookshelf-layout' }"
@@ -1362,6 +1382,12 @@ onUnmounted(() => {
           @click="switchSidebar('search')" 
           title="搜索"
         ><SearchIcon :size="22" /></button>
+        <button 
+          class="func-btn" 
+          :class="{ active: activeSidebar === 'notes' }"
+          @click="switchSidebar('notes')" 
+          title="笔记"
+        ><NoteIcon :size="22" /></button>
         <button 
           class="func-btn" 
           @click="handleRefresh" 
@@ -1602,6 +1628,7 @@ onUnmounted(() => {
                 :tab-id="tab.id"
                 :book-md5="tab.bookMd5"
                 :shelf-name="tab.shelfName"
+                :is-active="activeTabId === tab.id"
                 :ref="(el: any) => { 
                   if (el) readerRefs.set(tab.id, el)
                   else readerRefs.delete(tab.id)
@@ -1865,6 +1892,11 @@ onUnmounted(() => {
   color: var(--text-primary);
 }
 
+.func-btn.active {
+  background-color: rgba(color-mix(in srgb, var(--primary-color)50%, var(--accent-color) 50%), 0.15);
+  color: color-mix(in srgb, var(--primary-color) 50%, var(--accent-color) 50%);
+}
+
 .func-btn.settings:hover {
   background-color: rgba(0, 0, 0, 0.05);
   color: var(--text-primary);
@@ -2045,7 +2077,7 @@ onUnmounted(() => {
   left: 15%;
   right: 15%;
   height: 3px;
-  background: var(--primary-color);
+  background: color-mix(in srgb, var(--primary-color) 50%, var(--accent-color) 50%);
   border-radius: 3px 3px 0 0;
   transform: scaleX(0);
   transition: transform var(--transition-normal);
@@ -2057,7 +2089,7 @@ onUnmounted(() => {
 }
 
 .tab-item.active {
-  color: var(--primary-color);
+  color: color-mix(in srgb, var(--primary-color) 50%, var(--accent-color) 50%);
   font-weight: 600;
 }
 

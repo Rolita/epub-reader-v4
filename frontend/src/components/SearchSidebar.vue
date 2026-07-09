@@ -171,7 +171,7 @@ const formatTime = (timestamp: number) => {
 <template>
   <div class="search-wrapper">
     <div class="sidebar-header" style="--wails-draggable: drag;">
-      <h2><SearchIcon :size="22" style="margin-right: 8px;" />搜索内容</h2>
+      <h2><SearchIcon :size="22" style="margin-right: 8px;" />搜索</h2>
     </div>
     
     <div class="search-content">
@@ -491,7 +491,9 @@ const formatTime = (timestamp: number) => {
 }
 
 .result-snippet {
-  display: block;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   font-size: 0.8rem;
   color: var(--text-secondary);
   line-height: 1.6;
@@ -499,7 +501,6 @@ const formatTime = (timestamp: number) => {
   border-left: 2px solid var(--border-color);
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .search-history {

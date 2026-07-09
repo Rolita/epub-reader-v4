@@ -6,7 +6,7 @@ export interface Shelf {
   name: string
 }
 
-export type ReadStatus = 'unread' | 'read'
+export type ReadStatus = 'unread' | 'reading' | 'read'
 
 export interface Book {
   id: string
@@ -20,6 +20,8 @@ export interface Book {
   order: number
   readStatus?: ReadStatus
   readingProgress?: number
+  isFavorite?: boolean
+  lastReadTime?: number
 }
 
 export interface Group {
@@ -43,6 +45,10 @@ export const useLibraryStore = defineStore('library', () => {
   
   // 当前激活的分组
   const activeGroupId = ref<string | null>(null)
+  
+  // 当前激活的书籍分类（最近阅读/已读/未读/收藏，null 表示全部）
+  type BookCategory = 'recent' | 'read' | 'unread' | 'favorite'
+  const activeBookCategory = ref<BookCategory | null>(null)
   
   // 当前激活的书架
   const activeShelf = computed(() => {
@@ -70,6 +76,53 @@ export const useLibraryStore = defineStore('library', () => {
     const groupItems = currentGroups.value.map(g => ({ ...g, type: 'group' as const }))
     const bookItems = rootBooks.value.map(b => ({ ...b, type: 'book' as const }))
     return [...groupItems, ...bookItems]
+  })
+  
+  // 最近阅读的书籍（按 lastReadTime 倒序）
+  const recentBooks = computed(() => {
+    return [...currentBooks.value]
+      .filter(b => b.lastReadTime && b.lastReadTime > 0)
+      .sort((a, b) => (b.lastReadTime || 0) - (a.lastReadTime || 0))
+  })
+  
+  // 已读的书籍（readingProgress >= 90 或 readStatus === 'read'）
+  const readBooks = computed(() => {
+    return currentBooks.value.filter(b => {
+      return (b.readingProgress && b.readingProgress >= 90) || b.readStatus === 'read'
+    })
+  })
+  
+  // 未读的书籍（readingProgress < 10 或 readStatus === 'unread' 或未设置）
+  const unreadBooks = computed(() => {
+    return currentBooks.value.filter(b => {
+      return (!b.readingProgress || b.readingProgress < 10) && b.readStatus !== 'read'
+    })
+  })
+  
+  // 收藏的书籍
+  const favoriteBooks = computed(() => {
+    return currentBooks.value.filter(b => b.isFavorite)
+  })
+  
+  // 根据当前激活的分类返回对应的书籍
+  const filteredBooks = computed(() => {
+    if (!activeBookCategory.value) {
+      // 如果没有分类，返回根级别的书籍
+      return rootBooks.value
+    }
+    
+    switch (activeBookCategory.value) {
+      case 'recent':
+        return recentBooks.value
+      case 'read':
+        return readBooks.value
+      case 'unread':
+        return unreadBooks.value
+      case 'favorite':
+        return favoriteBooks.value
+      default:
+        return rootBooks.value
+    }
   })
 
   // ============ 书架操作 ============
@@ -425,6 +478,20 @@ export const useLibraryStore = defineStore('library', () => {
     activeGroupId.value = groupId
   }
   
+  // 切换激活书籍分类
+  function setActiveBookCategory(category: BookCategory | null) {
+    activeBookCategory.value = category
+  }
+  
+  // 更新书籍最后阅读时间
+  function updateBookLastReadTime(bookId: string) {
+    const book = currentBooks.value.find(b => b.id === bookId)
+    if (book) {
+      book.lastReadTime = Date.now()
+      saveShelfDataFull()
+    }
+  }
+  
   // 将书籍添加到分组
   async function addBookToGroup(bookId: string, groupId: string) {
     const book = currentBooks.value.find(b => b.id === bookId)
@@ -503,6 +570,17 @@ export const useLibraryStore = defineStore('library', () => {
     }
   }
 
+  // 切换书籍收藏状态
+  async function toggleFavorite(bookId: string) {
+    const book = currentBooks.value.find(b => b.id === bookId)
+    if (book) {
+      book.isFavorite = !book.isFavorite
+      await saveBooks()
+      return true
+    }
+    return false
+  }
+
   return {
     // 状态
     shelves,
@@ -512,9 +590,15 @@ export const useLibraryStore = defineStore('library', () => {
     currentGroups,
     activeGroupId,
     activeGroup,
+    activeBookCategory,
     groupBooks,
     rootBooks,
     rootItems,
+    recentBooks,
+    readBooks,
+    unreadBooks,
+    favoriteBooks,
+    filteredBooks,
     
     // 书架操作
     scanShelves,
@@ -543,6 +627,13 @@ export const useLibraryStore = defineStore('library', () => {
     reorderGroup,
     setActiveGroup,
     addBookToGroup,
-    removeBookFromGroup
+    removeBookFromGroup,
+    
+    // 书籍分类操作
+    setActiveBookCategory,
+    updateBookLastReadTime,
+    
+    // 收藏操作
+    toggleFavorite
   }
 })
