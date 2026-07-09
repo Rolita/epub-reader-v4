@@ -397,6 +397,52 @@ func (a *App) SaveProgress(filePath string, progressJSON string) error {
 	return nil
 }
 
+// SaveBookmark 保存书签到书籍同目录的 config.json
+func (a *App) SaveBookmark(filePath string, bookmarkJSON string) error {
+	return config.SaveBookmark(filePath, bookmarkJSON)
+}
+
+// GetBookmarks 获取书籍的所有书签
+func (a *App) GetBookmarks(filePath string) (string, error) {
+	bookmarks, err := config.GetBookmarks(filePath)
+	if err != nil {
+		return "", err
+	}
+	data, err := json.Marshal(bookmarks)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+// DeleteBookmark 删除指定 CFI 的书签
+func (a *App) DeleteBookmark(filePath string, cfi string) error {
+	return config.DeleteBookmark(filePath, cfi)
+}
+
+// SaveSearchHistory 保存搜索历史到书籍同目录的 config.json
+func (a *App) SaveSearchHistory(filePath string, keyword string) error {
+	return config.SaveSearchHistory(filePath, keyword)
+}
+
+// GetSearchHistory 获取书籍的搜索历史
+func (a *App) GetSearchHistory(filePath string) (string, error) {
+	history, err := config.GetSearchHistory(filePath)
+	if err != nil {
+		return "", err
+	}
+	data, err := json.Marshal(history)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+// ClearSearchHistory 清除书籍的搜索历史
+func (a *App) ClearSearchHistory(filePath string) error {
+	return config.ClearSearchHistory(filePath)
+}
+
 // SyncBookConfig 异步同步单个书籍的 config.json 到 WebDAV（带防抖）
 func (a *App) SyncBookConfig(filePath string) {
 	// 从文件路径中提取 shelfName 和 bookID (md5)
@@ -440,6 +486,10 @@ func (a *App) SyncBookConfig(filePath string) {
 
 func (a *App) GetProgress(filePath string) string {
 	return config.GetProgress(filePath)
+}
+
+func (a *App) ClearProgress(filePath string) error {
+	return config.ClearProgress(filePath)
 }
 
 // ============ 系统操作 ============

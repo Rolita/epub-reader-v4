@@ -62,10 +62,10 @@ const handleImageContextMenu = (e: MouseEvent, illustration: IllustrationItem) =
     
     <div class="illustration-content">
       <!-- 空状态 -->
-      <div v-if="settingsStore.illustrations.length === 0" class="illustration-placeholder">
-        <IllustrationIcon :size="64" class="placeholder-icon" />
-        <p class="placeholder-text">暂无插画内容</p>
-        <p class="placeholder-hint">打开书籍后自动收集</p>
+      <div v-if="settingsStore.illustrations.length === 0" class="empty-state">
+        <IllustrationIcon :size="48" style="opacity: 0.3; margin-bottom: 12px;" />
+        <span>暂无插画内容</span>
+        <p style="font-size: 0.8rem; color: var(--text-muted); margin-top: 8px;">打开书籍后自动收集</p>
       </div>
       
       <!-- 按章节分组的插图 -->
@@ -137,31 +137,13 @@ const handleImageContextMenu = (e: MouseEvent, illustration: IllustrationItem) =
 }
 
 /* 空状态 */
-.illustration-placeholder {
+.empty-state {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 60px 20px;
-  text-align: center;
-}
-
-.placeholder-icon {
-  opacity: 0.3;
-  margin-bottom: 16px;
-}
-
-.placeholder-text {
-  margin: 0 0 8px 0;
-  font-size: 1rem;
-  font-weight: 500;
-  color: var(--text-color);
-}
-
-.placeholder-hint {
-  margin: 0;
-  font-size: 0.85rem;
-  color: var(--text-muted);
+  height: 100%;
+  color: var(--text-secondary);
 }
 
 /* 章节分组 */

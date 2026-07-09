@@ -229,12 +229,7 @@ const saveImage = async () => {
 // 复制图片
 const copyImage = async () => {
   try {
-    if (currentSrc.value.startsWith('/epub-img/')) {
-      // @ts-ignore
-      await window.go.main.App.CopyImageToClipboard(currentSrc.value)
-    } else {
-      await copyImageToClipboardFrontend(currentSrc.value)
-    }
+    await copyRotatedImageToClipboard(currentSrc.value, rotation.value)
     
     // 显示复制成功提示
     showCopySuccess.value = true
@@ -332,6 +327,54 @@ const copyImageToClipboardFrontend = async (src: string): Promise<void> => {
         return
       }
       ctx.drawImage(img, 0, 0)
+      
+      canvas.toBlob(async (blob) => {
+        if (!blob) {
+          reject(new Error('无法转换为 Blob'))
+          return
+        }
+        try {
+          await navigator.clipboard.write([
+            new ClipboardItem({ 'image/png': blob })
+          ])
+          resolve()
+        } catch (err) {
+          reject(err)
+        }
+      }, 'image/png')
+    }
+    img.onerror = () => {
+      reject(new Error('图片加载失败'))
+    }
+    img.src = src
+  })
+}
+
+// 复制旋转后的图片到剪贴板
+const copyRotatedImageToClipboard = async (src: string, rotation: number): Promise<void> => {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.crossOrigin = 'anonymous'
+    img.onload = () => {
+      const rad = (rotation * Math.PI) / 180
+      const sin = Math.abs(Math.sin(rad))
+      const cos = Math.abs(Math.cos(rad))
+      
+      const newWidth = img.naturalWidth * cos + img.naturalHeight * sin
+      const newHeight = img.naturalWidth * sin + img.naturalHeight * cos
+      
+      const canvas = document.createElement('canvas')
+      canvas.width = newWidth
+      canvas.height = newHeight
+      const ctx = canvas.getContext('2d')
+      if (!ctx) {
+        reject(new Error('无法创建 Canvas 上下文'))
+        return
+      }
+      
+      ctx.translate(newWidth / 2, newHeight / 2)
+      ctx.rotate(rad)
+      ctx.drawImage(img, -img.naturalWidth / 2, -img.naturalHeight / 2)
       
       canvas.toBlob(async (blob) => {
         if (!blob) {

@@ -10,6 +10,14 @@ export function CalculateMD5(arg1) {
   return window['go']['main']['App']['CalculateMD5'](arg1);
 }
 
+export function ClearProgress(arg1) {
+  return window['go']['main']['App']['ClearProgress'](arg1);
+}
+
+export function ClearSearchHistory(arg1) {
+  return window['go']['main']['App']['ClearSearchHistory'](arg1);
+}
+
 export function ClearWebDAVLogs() {
   return window['go']['main']['App']['ClearWebDAVLogs']();
 }
@@ -28,6 +36,10 @@ export function CreateShelf(arg1) {
 
 export function DeleteBook(arg1, arg2, arg3) {
   return window['go']['main']['App']['DeleteBook'](arg1, arg2, arg3);
+}
+
+export function DeleteBookmark(arg1, arg2) {
+  return window['go']['main']['App']['DeleteBookmark'](arg1, arg2);
 }
 
 export function DeleteDirectory(arg1) {
@@ -58,6 +70,10 @@ export function GetBookLocalPath(arg1, arg2) {
   return window['go']['main']['App']['GetBookLocalPath'](arg1, arg2);
 }
 
+export function GetBookmarks(arg1) {
+  return window['go']['main']['App']['GetBookmarks'](arg1);
+}
+
 export function GetBooksDir() {
   return window['go']['main']['App']['GetBooksDir']();
 }
@@ -80,6 +96,10 @@ export function GetPendingEpubPath() {
 
 export function GetProgress(arg1) {
   return window['go']['main']['App']['GetProgress'](arg1);
+}
+
+export function GetSearchHistory(arg1) {
+  return window['go']['main']['App']['GetSearchHistory'](arg1);
 }
 
 export function GetShelfDir() {
@@ -130,12 +150,20 @@ export function SaveBookCover(arg1, arg2, arg3) {
   return window['go']['main']['App']['SaveBookCover'](arg1, arg2, arg3);
 }
 
+export function SaveBookmark(arg1, arg2) {
+  return window['go']['main']['App']['SaveBookmark'](arg1, arg2);
+}
+
 export function SaveFile(arg1, arg2, arg3) {
   return window['go']['main']['App']['SaveFile'](arg1, arg2, arg3);
 }
 
 export function SaveProgress(arg1, arg2) {
   return window['go']['main']['App']['SaveProgress'](arg1, arg2);
+}
+
+export function SaveSearchHistory(arg1, arg2) {
+  return window['go']['main']['App']['SaveSearchHistory'](arg1, arg2);
 }
 
 export function SaveShelfData(arg1, arg2) {

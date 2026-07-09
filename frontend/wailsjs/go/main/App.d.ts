@@ -8,6 +8,10 @@ export function CalculateFileMD5(arg1:string):Promise<string>;
 
 export function CalculateMD5(arg1:Array<number>):Promise<string>;
 
+export function ClearProgress(arg1:string):Promise<void>;
+
+export function ClearSearchHistory(arg1:string):Promise<void>;
+
 export function ClearWebDAVLogs():Promise<void>;
 
 export function CopyFile(arg1:string,arg2:string,arg3:string):Promise<string>;
@@ -17,6 +21,8 @@ export function CopyImageToClipboard(arg1:string):Promise<void>;
 export function CreateShelf(arg1:string):Promise<void>;
 
 export function DeleteBook(arg1:string,arg2:string,arg3:string):Promise<void>;
+
+export function DeleteBookmark(arg1:string,arg2:string):Promise<void>;
 
 export function DeleteDirectory(arg1:string):Promise<void>;
 
@@ -32,6 +38,8 @@ export function ForceQuit():Promise<void>;
 
 export function GetBookLocalPath(arg1:string,arg2:string):Promise<string>;
 
+export function GetBookmarks(arg1:string):Promise<string>;
+
 export function GetBooksDir():Promise<string>;
 
 export function GetEpubImageByPath(arg1:string,arg2:string):Promise<Array<number>>;
@@ -43,6 +51,8 @@ export function GetFileInfo(arg1:string):Promise<main.FileInfo>;
 export function GetPendingEpubPath():Promise<string>;
 
 export function GetProgress(arg1:string):Promise<string>;
+
+export function GetSearchHistory(arg1:string):Promise<string>;
 
 export function GetShelfDir():Promise<string>;
 
@@ -68,9 +78,13 @@ export function RenameShelf(arg1:string,arg2:string):Promise<void>;
 
 export function SaveBookCover(arg1:string,arg2:string,arg3:string):Promise<void>;
 
+export function SaveBookmark(arg1:string,arg2:string):Promise<void>;
+
 export function SaveFile(arg1:string,arg2:string,arg3:Array<number>):Promise<string>;
 
 export function SaveProgress(arg1:string,arg2:string):Promise<void>;
+
+export function SaveSearchHistory(arg1:string,arg2:string):Promise<void>;
 
 export function SaveShelfData(arg1:string,arg2:string):Promise<void>;
 

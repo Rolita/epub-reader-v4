@@ -32,6 +32,8 @@ import BookmarkIcon from '../components/icons/BookmarkIcon.vue'
 import SaveIcon from '../components/icons/SaveIcon.vue'
 import LayoutGridIcon from '../components/icons/LayoutGridIcon.vue'
 import IllustrationIcon from '../components/icons/IllustrationIcon.vue'
+import TranslateIcon from '../components/icons/TranslateIcon.vue'
+import SearchIcon from '../components/icons/SearchIcon.vue'
 import { handleRestoreProgress as restoreProgressAction, handleSaveProgress as saveProgressAction } from '../composables/useProgressButtons'
 
 interface Tab {
@@ -202,6 +204,10 @@ const getActiveReader = () => {
   return readerRefs.get(activeTabId.value)
 }
 
+const getActiveReaderFilePath = () => {
+  return activeTab.value?.type === 'reader' ? activeTab.value?.filePath : undefined
+}
+
 // 监听 tab 切换，当从阅读器切换走时自动保存进度，切换到阅读器时自动恢复进度
 watch(activeTabId, (newTabId, oldTabId) => {
   // 从阅读器切换走时保存进度
@@ -309,6 +315,24 @@ const switchSidebar = async (viewName: string) => {
   }
   
   sidebarRef.value?.switchView(viewName)
+}
+
+const searchInBook = async (keyword: string) => {
+  const reader = getActiveReader()
+  if (!reader || !reader.searchInBook) return []
+  return await reader.searchInBook(keyword)
+}
+
+const highlightSearchKeyword = (keyword: string) => {
+  const reader = getActiveReader()
+  if (!reader || !reader.highlightSearchKeyword) return
+  reader.highlightSearchKeyword(keyword)
+}
+
+const clearSearchHighlight = () => {
+  const reader = getActiveReader()
+  if (!reader || !reader.clearHighlight) return
+  reader.clearHighlight()
 }
 
 // 从阅读器收集插图
@@ -448,6 +472,10 @@ const handleReaderReady = () => {
   setTimeout(() => {
     handleRestoreProgress()
   }, 500)
+}
+
+const handleBookmarkSaved = () => {
+  sidebarRef.value?.refreshBookmarks()
 }
 
 // 保存阅读进度
@@ -716,6 +744,7 @@ const closeTab = async (tabId: string) => {
       await window.go.main.App.UnregisterEpubTab(tabId)
       bookStore.clearActiveBook()
       settingsStore.clearIllustrations()
+      await store.loadBooksProgress()
     }
     
     // 如果关闭的是分组标签，清空激活的分组
@@ -1317,6 +1346,24 @@ onUnmounted(() => {
         ><IllustrationIcon :size="22" /></button>
         <button 
           class="func-btn" 
+          :class="{ active: activeSidebar === 'bookmarks' }"
+          @click="switchSidebar('bookmarks')" 
+          title="书签"
+        ><BookmarkIcon :size="22" /></button>
+        <button 
+          class="func-btn" 
+          :class="{ active: activeSidebar === 'translate' }"
+          @click="switchSidebar('translate')" 
+          title="翻译"
+        ><TranslateIcon :size="22" /></button>
+        <button 
+          class="func-btn" 
+          :class="{ active: activeSidebar === 'search' }"
+          @click="switchSidebar('search')" 
+          title="搜索"
+        ><SearchIcon :size="22" /></button>
+        <button 
+          class="func-btn" 
           @click="handleRefresh" 
           title="刷新"
         ><RefreshIcon :size="22" /></button>
@@ -1347,7 +1394,22 @@ onUnmounted(() => {
     </aside>
     
     <!-- 侧边栏容器 -->
-    <SidebarContainer ref="sidebarRef" @jump="handleJump" @preview="handlePreview" @open-shelf="handleOpenShelf" @add-theme="openAddThemeTab" @edit-theme="openEditThemeTab" @sync-complete="handleRefresh" @show-toast="handleShowToast" />
+    <SidebarContainer
+      ref="sidebarRef"
+      :has-active-book="activeTab?.type === 'reader'"
+      :book-title="activeTab?.type === 'reader' ? activeTab?.name : ''"
+      :file-path="activeTab?.type === 'reader' ? getActiveReaderFilePath() : undefined"
+      :search-in-book="searchInBook"
+      :highlight-search-keyword="highlightSearchKeyword"
+      :clear-search-highlight="clearSearchHighlight"
+      @jump="handleJump"
+      @preview="handlePreview"
+      @open-shelf="handleOpenShelf"
+      @add-theme="openAddThemeTab"
+      @edit-theme="openEditThemeTab"
+      @sync-complete="handleRefresh"
+      @show-toast="handleShowToast"
+    />
     
     <!-- 主内容区 -->
     <main class="main-content">
@@ -1545,6 +1607,7 @@ onUnmounted(() => {
                   else readerRefs.delete(tab.id)
                 }"
                 @ready="handleReaderReady"
+                @bookmark-saved="handleBookmarkSaved"
               />
             </template>
           </div>
@@ -1608,6 +1671,7 @@ onUnmounted(() => {
                       @click="switchTab(tab.id, pane.id)"
                       @scroll="switchTab(tab.id, pane.id)"
                       @ready="handleReaderReady"
+                      @bookmark-saved="handleBookmarkSaved"
                       :ref="(el: any) => { 
                         if (el) readerRefs.set(tab.id, el)
                         else readerRefs.delete(tab.id)
@@ -1677,6 +1741,7 @@ onUnmounted(() => {
                       @click="switchTab(tab.id, pane.id)"
                       @scroll="switchTab(tab.id, pane.id)"
                       @ready="handleReaderReady"
+                      @bookmark-saved="handleBookmarkSaved"
                       :ref="(el: any) => { 
                         if (el) readerRefs.set(tab.id, el)
                         else readerRefs.delete(tab.id)

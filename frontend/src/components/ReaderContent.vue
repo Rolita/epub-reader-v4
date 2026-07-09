@@ -14,22 +14,37 @@
     
     <div ref="viewerContainer" class="viewer-container" :class="{ 'hidden': isLoading }"></div>
     
+    <!-- 全屏模式顶部拖拽区域 -->
+    <div v-if="isFullscreen" class="fullscreen-drag-area"></div>
+    
     <div class="reader-controls" :class="{ 'hidden': isLoading }">
       <button @click="prevPage" class="nav-btn left">〈</button>
       <button @click="nextPage" class="nav-btn right">〉</button>
     </div>
+    
+    <!-- 阅读进度条 -->
+    <ReaderProgress 
+      :progress="progress" 
+      :is-hidden="isLoading" 
+      :visible="showProgress"
+      @click="handleProgressClick"
+      @mouseenter="handleProgressMouseEnter"
+      @mouseleave="handleProgressMouseLeave"
+    />
 
 
 
-    <!-- 非全屏时的全屏按钮 -->
-    <button 
-      v-if="!isLoading && !isFullscreen" 
-      @click="enterFullscreen" 
-      class="fullscreen-toggle-btn"
-      title="全屏阅读 (F11)"
-    >
-      <FullscreenIcon :size="24" />
-    </button>
+    <ReaderFunctionMenu
+      :visible="showFunctionMenu"
+      :is-loading="isLoading"
+      :is-fullscreen="isFullscreen"
+      :file-path="props.filePath"
+      :rendition="rendition"
+      @enter-fullscreen="enterFullscreen"
+      @exit-fullscreen="exitFullscreen"
+      @mouseleave="showFunctionMenu = false"
+      @bookmark-saved="handleBookmarkSaved"
+    />
 
     <!-- 图片预览组件 -->
     <ImagePreview 
@@ -48,17 +63,22 @@ import { ref, onMounted, onUnmounted, watch } from 'vue';
 import Epub from 'epubjs';
 import ImagePreview from './ImagePreview.vue';
 import LoadingOverlay from './LoadingOverlay.vue';
+import ReaderProgress from './ReaderProgress.vue';
 import { useBookStore, TocItem } from '../stores/book';
 import { useSettingsStore } from '../stores/settings';
 import { useThemeStore } from '../stores/theme';
-import { saveReaderProgress, restoreReaderProgress } from '../composables/useReaderProgress';
+import { useLibraryStore } from '../stores/library';
+import { saveReaderProgress, restoreReaderProgress, saveBookmark } from '../composables/useReaderProgress';
+import { eventBus } from '../composables/useEventBus';
 import FullscreenIcon from './icons/FullscreenIcon.vue';
+import ReaderFunctionMenu from './ReaderFunctionMenu.vue';
 
 const props = defineProps<{ filePath: string; isSplitMode?: boolean; isActive?: boolean; tabId?: string; bookMd5?: string; shelfName?: string }>();
 const emit = defineEmits<{ 
   (e: 'click'): void;
   (e: 'scroll'): void;
   (e: 'ready'): void;
+  (e: 'bookmark-saved'): void;
 }>();
 const viewerContainer = ref<HTMLElement | null>(null);
 
@@ -70,10 +90,22 @@ const previewImageAlt = ref('')
 // 全屏状态
 const isFullscreen = ref(false)
 
+// 进度条显示状态
+const showProgress = ref(false)
+
+// 鼠标是否在进度条上
+const isMouseOnProgress = ref(false)
+
+// 离开进度条后的冷却期
+const justLeftProgress = ref(false)
+let leaveProgressTimer: any = null
+
 // 当前章节标题
 const currentChapterTitle = ref('')
 // 当前书籍的目录（组件内部维护，不依赖全局 store）
 const bookToc = ref<any[]>([])
+// 当前搜索关键词（用于翻页后重新高亮）
+const currentSearchKeyword = ref('')
 
 // 图片预览方法
 const openImagePreview = (src: string, alt: string = '') => {
@@ -86,7 +118,16 @@ const closeImagePreview = () => {
   imagePreviewVisible.value = false
 }
 
+const libraryStore = useLibraryStore();
 
+const saveProgressAndUpdateLibrary = async () => {
+  const result = await saveReaderProgress(rendition, props.filePath)
+  if (result && result.percentage !== undefined && props.bookMd5) {
+    const progressPercent = Math.round(result.percentage * 100)
+    libraryStore.updateBookProgress(props.bookMd5, progressPercent)
+  }
+  return result
+}
 
 let book: any = null;
 let rendition: any = null;
@@ -95,6 +136,10 @@ let autoSaveTimer: any = null; // 自动保存进度定时器
 
 // 加载状态
 const isLoading = ref(true)
+
+// 阅读进度
+const progress = ref(0)
+const progressText = ref('0%')
 
 const bookStore = useBookStore();
 const settingsStore = useSettingsStore();
@@ -196,6 +241,13 @@ const injectPowerfulStyles = () => {
       margin-top: 0 !important;
       margin-bottom: 0.3em !important;
     }
+    /* 9. 搜索高亮样式 */
+    .readest-search-highlight {
+      background-color: #FFEB3B !important;
+      color: #000000 !important;
+      border-radius: 2px !important;
+      padding: 0 2px !important;
+    }
   `;
 
   // 直接注入到 iframe DOM，避免 epub.js append 累积 style 标签
@@ -279,6 +331,85 @@ const getFileName = (href: string) => {
   return url.pathname.split('/').pop() || '';
 };
 
+// 更新阅读进度
+const updateProgress = () => {
+  if (!rendition || !book) return
+  
+  const location = rendition.location
+  if (!location) return
+  
+  let progressPercent = 0
+  
+  if (book.locations && book.locations.total > 0 && location.start.cfi) {
+    try {
+      const percentage = book.locations.percentageFromCfi(location.start.cfi)
+      progressPercent = Math.round(percentage * 100)
+    } catch (e) {
+      console.warn('使用 locations 计算进度失败:', e)
+    }
+  }
+  
+  if (progressPercent === 0 && book.spine) {
+    const sections: any[] = []
+    if (typeof book.spine.each === 'function') {
+      book.spine.each((section: any) => sections.push(section))
+    } else if (Array.isArray(book.spine)) {
+      sections.push(...book.spine)
+    } else if (book.spine.items) {
+      sections.push(...book.spine.items)
+    }
+    
+    const currentSectionIndex = sections.findIndex(s => 
+      location.start.href && s.href && location.start.href.includes(s.href)
+    )
+    
+    if (currentSectionIndex >= 0 && sections.length > 0) {
+      progressPercent = Math.round((currentSectionIndex / (sections.length - 1)) * 100)
+    }
+  }
+  
+  if (location.start && location.end) {
+    const indexProgress = Math.round((location.start.index / location.end.index) * 100)
+    if (indexProgress > 0 && indexProgress < 100) {
+      progressPercent = indexProgress
+    }
+  }
+  
+  progress.value = Math.min(Math.max(progressPercent, 0), 100)
+  progressText.value = `${progress.value}%`
+}
+
+// 点击进度条跳转
+const handleProgressClick = (percent: number) => {
+  if (!rendition || !book) return
+  
+  if (book.locations && typeof book.locations.cfiFromPercentage === 'function') {
+    const cfi = book.locations.cfiFromPercentage(percent)
+    rendition.display(cfi)
+    setTimeout(() => {
+      rendition.display(cfi)
+    }, 50)
+  } else if (book.spine) {
+    const sections: any[] = []
+    if (typeof book.spine.each === 'function') {
+      book.spine.each((section: any) => sections.push(section))
+    } else if (Array.isArray(book.spine)) {
+      sections.push(...book.spine)
+    } else if (book.spine.items) {
+      sections.push(...book.spine.items)
+    }
+    
+    const targetIndex = Math.min(Math.floor(percent * sections.length), sections.length - 1)
+    const targetSection = sections[targetIndex]
+    if (targetSection) {
+      rendition.display(targetSection.href)
+      setTimeout(() => {
+        rendition.display(targetSection.href)
+      }, 50)
+    }
+  }
+}
+
 // 更新当前章节标题
 const updateChapterTitle = (section?: any) => {
   const toc = bookToc.value;
@@ -328,9 +459,8 @@ const clearInlineStyles = () => {
 
     const elements = doc.querySelectorAll('*');
     elements.forEach((el: any) => {
+      if (el.classList?.contains?.('readest-search-highlight')) return;
       el.style.removeProperty('color');
-      el.style.removeProperty('background-color');
-      el.style.removeProperty('background');
       el.style.removeProperty('text-shadow');
       el.style.removeProperty('font-size');
       el.style.removeProperty('line-height');
@@ -343,6 +473,10 @@ const clearInlineStyles = () => {
       if (rendition && rendition.themes) {
         injectPowerfulStyles();
         applyTheme();
+      }
+      
+      if (currentSearchKeyword.value) {
+        highlightSearchKeyword(currentSearchKeyword.value);
       }
     });
   });
@@ -375,8 +509,22 @@ const base64ToBuffer = (base64: string) => {
   return buffer.buffer;
 };
 
-const prevPage = () => rendition?.prev();
-const nextPage = () => rendition?.next();
+const prevPage = () => {
+  if (rendition) {
+    rendition.prev()
+    requestAnimationFrame(() => {
+      updateProgress()
+    })
+  }
+};
+const nextPage = () => {
+  if (rendition) {
+    rendition.next()
+    requestAnimationFrame(() => {
+      updateProgress()
+    })
+  }
+};
 
 const initReader = async () => {
 	try {
@@ -404,6 +552,11 @@ const initReader = async () => {
     bookStore.setActiveBook(props.filePath, toc);
     // 5. 保存到组件内部，供分屏模式使用
     bookToc.value = toc;
+    
+    // 6. 生成 locations 索引，支持进度条跳转
+    if (book.locations) {
+      await book.locations.generate()
+    }
 
     // 6. 注册 tabId 和 EPUB 文件路径的映射
     if (props.tabId) {
@@ -421,6 +574,17 @@ const initReader = async () => {
 
       // 5. 注入滚轮监听和点击焦点钩子
       rendition.hooks.content.register((contents: any) => {
+        // 监听 iframe 内部的鼠标事件，用于隐藏功能菜单
+        const iframeDoc = contents.window.document.documentElement || contents.window.document.body;
+        if (iframeDoc) {
+          iframeDoc.addEventListener('mouseenter', () => {
+            showFunctionMenu.value = false;
+          });
+          // Note: mouseleave from iframe will naturally be caught by parent's mousemove if it re-enters the parent region
+          // Or, if we want to be explicit, we could add a mouseleave here that does nothing, or relies on parent logic.
+          // For now, just handling mouseenter to hide. The parent's mousemove on .reader-view will handle showing.
+        }
+
         contents.window.addEventListener('wheel', (event: WheelEvent) => {
           if (isScrolling) return;
 
@@ -546,6 +710,25 @@ const initReader = async () => {
 
       console.log("阅读器初始化完成");
       
+      // 更新初始进度
+      setTimeout(() => {
+        updateProgress()
+      }, 100)
+      
+      // 监听翻页事件更新进度
+      rendition.on('rendered', () => {
+        setTimeout(() => {
+          updateProgress()
+        }, 50)
+      })
+      
+      // 监听 locationChanged 事件
+      if (rendition.on) {
+        rendition.on('locationChanged', () => {
+          updateProgress()
+        })
+      }
+      
       // 通知父组件书籍已加载完成
       emit('ready')
       
@@ -566,6 +749,16 @@ const handleKey = (e: KeyboardEvent) => {
   
   if (e.key === 'ArrowLeft') prevPage();
   if (e.key === 'ArrowRight') nextPage();
+
+  // 空格键翻页
+  if (e.key === ' ') {
+    e.preventDefault(); // 阻止默认的空格键滚动行为
+    if (e.ctrlKey) {
+      prevPage(); // Ctrl + Space 向上翻页
+    } else {
+      nextPage(); // Space 向下翻页
+    }
+  }
   
   // F11 键切换全屏
   if (e.key === 'F11') {
@@ -614,8 +807,48 @@ const enterFullscreen = () => {
   });
 };
 
-// 鼠标移动处理（保留用于其他功能）
-const handleMouseMove = () => {
+// 右侧功能菜单显示状态
+const showFunctionMenu = ref(false)
+
+// 鼠标移动处理
+const handleMouseMove = (e: MouseEvent) => {
+  if (isMouseOnProgress.value || justLeftProgress.value) {
+    showFunctionMenu.value = false // 如果鼠标在进度条上，隐藏功能菜单
+    return
+  }
+
+  const target = e.currentTarget as HTMLElement
+  const rect = target.getBoundingClientRect()
+
+  // 判断是否在底部区域显示进度条
+  const bottomThreshold = 100
+  showProgress.value = rect.height - e.clientY < bottomThreshold
+
+  // 判断是否在右侧区域显示功能菜单
+  const rightThreshold = 150; // 右侧 150px 区域
+  showFunctionMenu.value = rect.width - e.clientX < rightThreshold;
+};
+
+const handleProgressMouseEnter = () => {
+  isMouseOnProgress.value = true
+  justLeftProgress.value = false
+  if (leaveProgressTimer) {
+    clearTimeout(leaveProgressTimer)
+    leaveProgressTimer = null
+  }
+};
+
+const handleProgressMouseLeave = () => {
+  isMouseOnProgress.value = false
+  showProgress.value = false
+  justLeftProgress.value = true
+  if (leaveProgressTimer) {
+    clearTimeout(leaveProgressTimer)
+  }
+  leaveProgressTimer = setTimeout(() => {
+    justLeftProgress.value = false
+    leaveProgressTimer = null
+  }, 100)
 };
 
 // 窗口大小变化处理
@@ -630,6 +863,12 @@ const handleResize = () => {
       console.log('窗口大小变化，重新渲染完成');
     }
   }, 200);
+};
+
+const handleBookmarkSaved = () => {
+  console.log('书签保存成功');
+  emit('bookmark-saved');
+  eventBus.emit('bookmark-saved');
 };
 
 // 退出全屏
@@ -686,14 +925,217 @@ const handleFullscreenChange = () => {
   }
 };
 
+const clearHighlight = () => {
+  currentSearchKeyword.value = '';
+  const contents = rendition.getContents ? rendition.getContents() : [];
+  contents.forEach((content: any) => {
+    const doc = content.document;
+    if (!doc) return;
+    const highlights = doc.querySelectorAll('.readest-search-highlight');
+    highlights.forEach((span: HTMLElement) => {
+      const parent = span.parentNode as HTMLElement;
+      if (parent) {
+        const text = span.textContent || '';
+        const textNode = doc.createTextNode(text);
+        parent.replaceChild(textNode, span);
+      }
+    });
+    mergeAdjacentTextNodes(doc.body);
+  });
+};
+
+const mergeAdjacentTextNodes = (element: HTMLElement) => {
+  let child = element.firstChild;
+  while (child) {
+    const next = child.nextSibling;
+    if (child.nodeType === Node.TEXT_NODE && next && next.nodeType === Node.TEXT_NODE) {
+      child.textContent = (child.textContent || '') + (next.textContent || '');
+      element.removeChild(next);
+    } else if (child.nodeType === Node.ELEMENT_NODE) {
+      mergeAdjacentTextNodes(child as HTMLElement);
+    }
+    child = next;
+  }
+};
+
+const highlightSearchKeyword = (keyword: string) => {
+  if (!keyword.trim()) return;
+  
+  currentSearchKeyword.value = keyword;
+  
+  const contents = rendition.getContents ? rendition.getContents() : [];
+  const escapedKeyword = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  
+  contents.forEach((content: any) => {
+    const doc = content.document;
+    if (!doc) return;
+    
+    const highlights = doc.querySelectorAll('.readest-search-highlight');
+    highlights.forEach((span: HTMLElement) => {
+      const parent = span.parentNode as HTMLElement;
+      if (parent) {
+        const text = span.textContent || '';
+        const textNode = doc.createTextNode(text);
+        parent.replaceChild(textNode, span);
+      }
+    });
+    
+    mergeAdjacentTextNodes(doc.body);
+    
+    const getAdjacentTextNodes = (startNode: Node): { nodes: Node[], text: string, nodeIndices: number[] } => {
+      const nodes: Node[] = [];
+      const nodeIndices: number[] = [];
+      let text = '';
+      let currentNode: Node | null = startNode;
+      
+      while (currentNode) {
+        if (currentNode.nodeType === Node.TEXT_NODE) {
+          const nodeText = currentNode.textContent || '';
+          nodes.push(currentNode);
+          for (let i = 0; i < nodeText.length; i++) {
+            nodeIndices.push(nodes.length - 1);
+          }
+          text += nodeText;
+        } else if (currentNode.nodeType === Node.ELEMENT_NODE) {
+          const element = currentNode as HTMLElement;
+          if (element.tagName === 'BR' || element.tagName === 'HR') {
+            break;
+          }
+          if (element.classList?.contains?.('readest-search-highlight')) {
+            break;
+          }
+          const elementText = currentNode.textContent || '';
+          nodes.push(currentNode);
+          for (let i = 0; i < elementText.length; i++) {
+            nodeIndices.push(nodes.length - 1);
+          }
+          text += elementText;
+        }
+        
+        currentNode = currentNode.nextSibling;
+      }
+      
+      return { nodes, text, nodeIndices };
+    };
+    
+    const highlightAcrossNodes = (startNode: Node, keyword: string) => {
+      const { nodes, text, nodeIndices } = getAdjacentTextNodes(startNode);
+      const regex = new RegExp(escapedKeyword, 'gi');
+      let match;
+      
+      while ((match = regex.exec(text)) !== null) {
+        const matchStart = match.index;
+        const matchEnd = matchStart + match[0].length;
+        
+        const startNodeIndex = nodeIndices[matchStart];
+        const endNodeIndex = nodeIndices[matchEnd - 1];
+        
+        if (startNodeIndex === endNodeIndex) {
+          const targetNode = nodes[startNodeIndex];
+          if (targetNode.nodeType === Node.TEXT_NODE) {
+            const nodeText = targetNode.textContent || '';
+            const relativeStart = nodeIndices.indexOf(startNodeIndex, matchStart);
+            const relativeEnd = relativeStart + match[0].length;
+            
+            const before = nodeText.substring(0, relativeStart);
+            const matchText = nodeText.substring(relativeStart, relativeEnd);
+            const after = nodeText.substring(relativeEnd);
+            
+            const parent = targetNode.parentNode as HTMLElement;
+            if (!parent || parent.classList?.contains?.('readest-search-highlight')) continue;
+            
+            const fragment = doc.createDocumentFragment();
+            if (before) fragment.appendChild(doc.createTextNode(before));
+            
+            const span = doc.createElement('span');
+            span.className = 'readest-search-highlight';
+            span.textContent = matchText;
+            fragment.appendChild(span);
+            
+            if (after) fragment.appendChild(doc.createTextNode(after));
+            
+            parent.replaceChild(fragment, targetNode);
+          }
+        } else {
+          for (let i = startNodeIndex; i <= endNodeIndex; i++) {
+            const targetNode = nodes[i];
+            
+            if (targetNode.nodeType === Node.TEXT_NODE) {
+              const nodeText = targetNode.textContent || '';
+              let startOffset = 0;
+              let endOffset = nodeText.length;
+              
+              if (i === startNodeIndex) {
+                startOffset = nodeIndices.indexOf(startNodeIndex, matchStart);
+              }
+              if (i === endNodeIndex) {
+                const endPos = matchEnd - 1;
+                const relativeEnd = nodeIndices.lastIndexOf(endNodeIndex, endPos) + 1;
+                endOffset = relativeEnd;
+              }
+              
+              const before = nodeText.substring(0, startOffset);
+              const matchPart = nodeText.substring(startOffset, endOffset);
+              const after = nodeText.substring(endOffset);
+              
+              const parent = targetNode.parentNode as HTMLElement;
+              if (!parent || parent.classList?.contains?.('readest-search-highlight')) continue;
+              
+              const fragment = doc.createDocumentFragment();
+              if (before) fragment.appendChild(doc.createTextNode(before));
+              
+              const span = doc.createElement('span');
+              span.className = 'readest-search-highlight';
+              span.textContent = matchPart;
+              fragment.appendChild(span);
+              
+              if (after) fragment.appendChild(doc.createTextNode(after));
+              
+              parent.replaceChild(fragment, targetNode);
+            } else if (targetNode.nodeType === Node.ELEMENT_NODE) {
+              const element = targetNode as HTMLElement;
+              if (element.classList?.contains?.('readest-search-highlight')) continue;
+              
+              const span = doc.createElement('span');
+              span.className = 'readest-search-highlight';
+              span.textContent = element.textContent || '';
+              element.parentNode?.replaceChild(span, element);
+            }
+          }
+        }
+      }
+    };
+    
+    const processElement = (element: HTMLElement) => {
+      if (element.classList?.contains?.('readest-search-highlight')) return;
+      
+      let child = element.firstChild;
+      while (child) {
+        const next = child.nextSibling;
+        
+        if (child.nodeType === Node.TEXT_NODE) {
+          const text = child.textContent || '';
+          if (text.length > 0) {
+            highlightAcrossNodes(child, keyword);
+          }
+        } else if (child.nodeType === Node.ELEMENT_NODE) {
+          processElement(child as HTMLElement);
+        }
+        
+        child = next;
+      }
+    };
+    
+    processElement(doc.body);
+  });
+};
+
 // 跳转到指定章节
 const jumpTo = (href: string, cfi?: string) => {
   if (rendition) {
-    // 如果有 CFI，使用 CFI 精确定位；否则直接跳转到章节
     const target = cfi || href
     console.log('[插图跳转] 跳转到:', target)
     rendition.display(target).then(() => {
-      // 跳转后切回焦点，确保键盘翻页可用
       viewerContainer.value?.focus();
     });
   }
@@ -861,20 +1303,91 @@ function isImageResource(resource: any): boolean {
   return isImageFile(href)
 }
 
+const searchInBook = async (keyword: string): Promise<Array<{ chapter: string; snippet: string; href: string; cfi: string; page: number }>> => {
+  if (!rendition || !book) return [];
+  
+  const results: Array<{ chapter: string; snippet: string; href: string; cfi: string; page: number }> = [];
+  
+  const sections: any[] = []
+  if (typeof book.spine.each === 'function') {
+    book.spine.each((section: any) => sections.push(section))
+  } else if (Array.isArray(book.spine)) {
+    sections.push(...book.spine)
+  } else if (book.spine.items) {
+    sections.push(...book.spine.items)
+  } else if (book.spine.spineItems) {
+    sections.push(...book.spine.spineItems)
+  }
+  
+  const navigation = book.navigation
+  const toc = navigation ? flattenToc(navigation.toc) : []
+  
+  for (const section of sections) {
+    try {
+      const doc = await (book as any).load(section.href)
+      if (!doc || typeof doc !== 'object') continue
+      
+      const docEl = doc.documentElement ? doc : doc.ownerDocument || doc
+      const chapterHref = section.href || ''
+      
+      const tocItem = toc.find(item => item.href === chapterHref || item.href.startsWith(chapterHref))
+      const chapterTitle = tocItem?.label || ''
+      
+      const paragraphs = docEl.querySelectorAll ? docEl.querySelectorAll('p, h1, h2, h3, h4, h5, h6') : []
+      
+      for (let i = 0; i < paragraphs.length; i++) {
+        const para = paragraphs[i]
+        const text = para.textContent || ''
+        if (text.toLowerCase().includes(keyword.toLowerCase())) {
+          const index = text.toLowerCase().indexOf(keyword.toLowerCase())
+          const start = Math.max(0, index - 30)
+          const end = Math.min(text.length, index + keyword.length + 30)
+          const snippet = (start > 0 ? '...' : '') + text.substring(start, end) + (end < text.length ? '...' : '')
+          
+          let cfi = ''
+          if (typeof section.cfiFromElement === 'function') {
+            try {
+              cfi = section.cfiFromElement(para)
+            } catch (e) {
+              console.warn('获取 CFI 失败:', e)
+            }
+          }
+          
+          results.push({
+            chapter: chapterTitle,
+            snippet: snippet,
+            href: chapterHref,
+            cfi: cfi,
+            page: 0
+          })
+        }
+      }
+    } catch (err) {
+      console.warn('加载章节失败:', section.href)
+    }
+  }
+  
+  return results;
+};
+
 // 暴露方法给父组件调用
 defineExpose({
   jumpTo,
   openImagePreview,
   restoreProgress: (cfi: string) => restoreReaderProgress(rendition, cfi, () => viewerContainer.value?.focus()),
-  saveProgress: () => saveReaderProgress(rendition, props.filePath),
+  saveProgress: () => saveProgressAndUpdateLibrary(),
   updateBookStore,
   refresh: () => initReader(),
-  getIllustrations: () => collectIllustrationsFromBook()
+  getIllustrations: () => collectIllustrationsFromBook(),
+  searchInBook,
+  highlightSearchKeyword,
+  clearHighlight,
+  filePath: props.filePath
 });
 
 // 程序关闭前保存进度
 const handleBeforeUnload = () => {
-  saveReaderProgress(rendition, props.filePath)
+  saveProgressAndUpdateLibrary()
 }
 
 onMounted(async () => {
@@ -888,7 +1401,7 @@ onMounted(async () => {
   document.addEventListener('MSFullscreenChange', handleFullscreenChange);
   // 每 10 分钟自动保存阅读进度
   autoSaveTimer = setInterval(() => {
-    saveReaderProgress(rendition, props.filePath)
+    saveProgressAndUpdateLibrary()
   },10 * 60 * 1000)
 });
 
@@ -902,7 +1415,7 @@ onUnmounted(() => {
   document.removeEventListener('MSFullscreenChange', handleFullscreenChange);
   clearTimeout(resizeTimer);
   clearInterval(autoSaveTimer);
-  saveReaderProgress(rendition, props.filePath)
+  saveProgressAndUpdateLibrary()
   if (rendition) rendition.destroy();
   
   // 注销 tabId 和 EPUB 文件路径的映射
@@ -1047,32 +1560,6 @@ watch(() => props.filePath, async () => {
   padding-right: 10px;
 }
 
-/* 阅读进度指示条 */
-.reader-progress {
-  position: absolute;
-  bottom: 30px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 60%;
-  height: 4px;
-  background: rgba(0, 0, 0, 0.08);
-  border-radius: 2px;
-  cursor: pointer;
-  opacity: 0;
-  transition: opacity var(--transition-normal);
-}
-
-.reader-view:hover .reader-progress {
-  opacity: 1;
-}
-
-.reader-progress-bar {
-  height: 100%;
-  background: linear-gradient(90deg, var(--primary-color) 0%, var(--accent-color) 100%);
-  border-radius: 2px;
-  transition: width var(--transition-fast);
-}
-
 /* 阅读设置按钮 */
 .reader-settings-btn {
   position: absolute;
@@ -1124,37 +1611,17 @@ watch(() => props.filePath, async () => {
   padding: 80px 150px;
 }
 
-/* 全屏切换按钮 */
-.fullscreen-toggle-btn {
-  position: absolute;
-  top: 20px;
-  right: 20px;
-  width: 44px;
-  height: 44px;
-  background: rgba(0, 0, 0, 0.05);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  opacity: 0;
-  transition: all var(--transition-normal);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 1.2rem;
-  color: var(--text-color);
+.fullscreen-drag-area {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 50px;
+  z-index: 9998;
+  --wails-draggable: drag;
 }
 
-.reader-view:hover .fullscreen-toggle-btn {
-  opacity: 0.7;
-}
 
-.fullscreen-toggle-btn:hover {
-  opacity: 1;
-  background: var(--primary-light);
-  border-color: var(--primary-color);
-}
 
 /* 全屏控制栏 */
 .fullscreen-controls {

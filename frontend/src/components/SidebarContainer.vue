@@ -4,18 +4,22 @@
     :class="{ 'is-collapsed': isCollapsed }"
     :style="!isCollapsed ? { width: settingsStore.sidebarWidth + 'px' } : {}"
   >
-    <component 
-      :is="currentComponent" 
-      v-bind="componentProps" 
-      @switch-view="switchView"
-      @jump="handleJump"
-      @preview="handlePreview"
-      @open-shelf="handleOpenShelf"
-      @add-theme="handleAddTheme"
-      @edit-theme="handleEditTheme"
-      @sync-complete="handleSyncComplete"
-      @show-toast="handleShowToast"
-    />
+    <keep-alive>
+      <component 
+        ref="currentComponentRef"
+        :is="currentComponent" 
+        v-bind="componentProps" 
+        :key="componentKey"
+        @switch-view="switchView"
+        @jump="handleJump"
+        @preview="handlePreview"
+        @open-shelf="handleOpenShelf"
+        @add-theme="handleAddTheme"
+        @edit-theme="handleEditTheme"
+        @sync-complete="handleSyncComplete"
+        @show-toast="handleShowToast"
+      />
+    </keep-alive>
     <!-- 拖拽调整柄 -->
     <div 
       class="resize-handle" 
@@ -26,7 +30,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, shallowRef } from 'vue';
+import { ref, shallowRef, watch } from 'vue';
 import ShelfSidebar from './ShelfSidebar.vue';
 import TocSidebar from './TocSidebar.vue';
 import LayoutSidebar from './LayoutSidebar.vue';
@@ -34,14 +38,40 @@ import ThemeSidebar from './ThemeSidebar.vue';
 import WebDavSidebar from './WebDavSidebar.vue';
 import BookshelfLayoutSidebar from './BookshelfLayoutSidebar.vue';
 import IllustrationSidebar from './IllustrationSidebar.vue';
+import BookmarksSidebar from './BookmarksSidebar.vue';
+import TranslateSidebar from './TranslateSidebar.vue';
+import SearchSidebar from './SearchSidebar.vue';
 import { useSettingsStore } from '../stores/settings';
 
 const settingsStore = useSettingsStore();
 
+const props = defineProps<{
+  hasActiveBook?: boolean;
+  bookTitle?: string;
+  filePath?: string;
+  searchInBook?: (keyword: string) => Promise<Array<{ chapter: string; snippet: string; href: string; cfi: string; page: number }>>;
+  highlightSearchKeyword?: (keyword: string) => void;
+  clearSearchHighlight?: () => void;
+}>();
+
 // 使用 any 类型解决组件事件类型不兼容问题
 const currentComponent = shallowRef<any>(ShelfSidebar);
+const currentComponentRef = ref<any>(null);
 const componentProps = ref({});
 const isCollapsed = ref(false);
+const componentKey = ref('shelf');
+
+watch(() => [props.hasActiveBook, props.bookTitle, props.searchInBook, props.highlightSearchKeyword, props.clearSearchHighlight], () => {
+  if (currentComponent.value === SearchSidebar) {
+    componentProps.value = {
+      hasActiveBook: props.hasActiveBook,
+      bookTitle: props.bookTitle,
+      searchInBook: props.searchInBook,
+      highlightSearchKeyword: props.highlightSearchKeyword,
+      clearSearchHighlight: props.clearSearchHighlight
+    };
+  }
+});
 
 // 拖拽调整宽度
 const MIN_WIDTH = 240;
@@ -74,31 +104,64 @@ const startResize = (e: MouseEvent) => {
 const switchView = (viewName: string) => {
   if (viewName === 'shelf') {
     currentComponent.value = ShelfSidebar;
+    componentKey.value = 'shelf';
     settingsStore.showIllustrationSidebar = false;
   }
   if (viewName === 'toc') {
     currentComponent.value = TocSidebar;
+    componentKey.value = 'toc';
     settingsStore.showIllustrationSidebar = false;
   }
   if (viewName === 'layout') {
     currentComponent.value = LayoutSidebar;
+    componentKey.value = 'layout';
     settingsStore.showIllustrationSidebar = false;
   }
   if (viewName === 'theme') {
     currentComponent.value = ThemeSidebar;
+    componentKey.value = 'theme';
     settingsStore.showIllustrationSidebar = false;
   }
   if (viewName === 'webdav') {
     currentComponent.value = WebDavSidebar;
+    componentKey.value = 'webdav';
     settingsStore.showIllustrationSidebar = false;
   }
   if (viewName === 'bookshelf-layout') {
     currentComponent.value = BookshelfLayoutSidebar;
+    componentKey.value = 'bookshelf-layout';
     settingsStore.showIllustrationSidebar = false;
   }
   if (viewName === 'illustration') {
     currentComponent.value = IllustrationSidebar;
+    componentKey.value = 'illustration';
     settingsStore.showIllustrationSidebar = true;
+  }
+  if (viewName === 'bookmarks') {
+    currentComponent.value = BookmarksSidebar;
+    componentKey.value = `bookmarks-${props.filePath}`;
+    componentProps.value = {
+      filePath: props.filePath
+    };
+    settingsStore.showIllustrationSidebar = false;
+  }
+  if (viewName === 'translate') {
+    currentComponent.value = TranslateSidebar;
+    componentKey.value = 'translate';
+    settingsStore.showIllustrationSidebar = false;
+  }
+  if (viewName === 'search') {
+    currentComponent.value = SearchSidebar;
+    componentKey.value = `search-${props.filePath}`;
+    componentProps.value = {
+      hasActiveBook: props.hasActiveBook,
+      bookTitle: props.bookTitle,
+      filePath: props.filePath,
+      searchInBook: props.searchInBook,
+      highlightSearchKeyword: props.highlightSearchKeyword,
+      clearSearchHighlight: props.clearSearchHighlight
+    };
+    settingsStore.showIllustrationSidebar = false;
   }
   if (viewName === 'none') {
     settingsStore.showIllustrationSidebar = false;
@@ -140,9 +203,16 @@ const handleShowToast = (message: string, type: 'success' | 'error') => {
   emit('show-toast', message, type);
 };
 
+const refreshBookmarks = () => {
+  if (currentComponent.value === BookmarksSidebar && currentComponentRef.value) {
+    currentComponentRef.value.refresh();
+  }
+};
+
 // 暴露方法供父组件调用
 defineExpose({
-  switchView
+  switchView,
+  refreshBookmarks
 });
 
 const emit = defineEmits<{

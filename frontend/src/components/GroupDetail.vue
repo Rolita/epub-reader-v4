@@ -791,7 +791,8 @@ const closeContextMenu = () => {
 const getReadStatusText = () => {
   if (!contextMenu.value.bookId) return '标记状态'
   const book = books.value.find((b: any) => b.id === contextMenu.value.bookId)
-  return book?.readStatus === 'read' ? '标记为未读' : '标记为已读'
+  const isRead = book?.readStatus === 'read' || (book?.readingProgress && book.readingProgress >= 100)
+  return isRead ? '标记为未读' : '标记为已读'
 }
 
 // 切换阅读状态
@@ -804,7 +805,20 @@ const handleToggleReadStatus = async () => {
     return
   }
   
-  book.readStatus = book.readStatus === 'read' ? 'unread' : 'read'
+  const wasRead = book.readStatus === 'read'
+  book.readStatus = wasRead ? 'unread' : 'read'
+  
+  if (wasRead && (book.readingProgress === undefined || book.readingProgress >= 100)) {
+    if (book.filePath) {
+      try {
+        // @ts-ignore
+        await window.go.main.App.ClearProgress(book.filePath)
+        book.readingProgress = 0
+      } catch (e) {
+        console.warn('清除进度失败:', e)
+      }
+    }
+  }
   
   await store.updateBook(book)
   closeContextMenu()
@@ -1052,7 +1066,8 @@ const handleClickOutsideContextMenu = (event: MouseEvent) => {
                 <span v-if="selectedBooks.has(book.id)">✓</span>
               </div>
               
-              <div v-if="book.readStatus === 'read'" class="read-status">已读</div>
+              <div v-if="book.readStatus === 'read' || (book.readingProgress && book.readingProgress >= 100)" class="read-status">已读</div>
+              <div v-else-if="book.readingProgress && book.readingProgress > 0 && book.readingProgress < 100" class="reading-progress">{{ book.readingProgress }}%</div>
               
               <div v-if="!isSelectMode && downloadingBooks.has(getBookKey(book))" class="download-status downloading">
                   <span class="spinner">⏳</span>
@@ -1670,15 +1685,27 @@ const handleClickOutsideContextMenu = (event: MouseEvent) => {
 
 .read-status {
   position: absolute;
-  top: 12px;
-  right: 0;
-  padding: 6px 15px;
-  border-radius: 20px 0 0 20px;
-  background: linear-gradient(135deg, var(--primary-color) 0%, var(--accent-color) 100%);
-  font-size: 0.78rem;
+  bottom: 12px;
+  left: 12px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--primary-color) 50%, var(--accent-color) 50%);
+  font-size: 0.75rem;
   color: white;
-  font-weight: 600;
-  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.5);
+  font-weight: 500;
+}
+
+.reading-progress {
+  position: absolute;
+  bottom: 12px;
+  left: 12px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(8px);
+  font-size: 0.75rem;
+  color: white;
+  font-weight: 500;
 }
 
 .download-status {

@@ -19,6 +19,7 @@ export interface Book {
   filePath?: string
   order: number
   readStatus?: ReadStatus
+  readingProgress?: number
 }
 
 export interface Group {
@@ -221,6 +222,8 @@ export const useLibraryStore = defineStore('library', () => {
       })
       groups.sort((a: any, b: any) => a.order - b.order)
       currentGroups.value = groups
+      
+      await loadBooksProgress()
     } catch (e) {
       console.error('加载书架书籍失败', e)
       currentBooks.value = []
@@ -283,6 +286,37 @@ export const useLibraryStore = defineStore('library', () => {
   // 保存当前书架的书籍（为了向后兼容）
   async function saveBooks() {
     await saveShelfDataFull()
+  }
+
+  // 更新书籍阅读进度
+  async function updateBookProgress(bookId: string, progress: number) {
+    const index = currentBooks.value.findIndex(b => b.id === bookId)
+    if (index !== -1) {
+      currentBooks.value[index].readingProgress = progress
+      await saveBooks()
+      return true
+    }
+    return false
+  }
+
+  // 批量加载书籍阅读进度
+  async function loadBooksProgress() {
+    for (const book of currentBooks.value) {
+      if (book.filePath) {
+        try {
+          // @ts-ignore
+          const progressJSON = await window.go.main.App.GetProgress(book.filePath)
+          if (progressJSON) {
+            const progressData = JSON.parse(progressJSON)
+            if (progressData.percentage !== undefined) {
+              book.readingProgress = Math.round(progressData.percentage * 100)
+            }
+          }
+        } catch (e) {
+          console.warn('加载书籍进度失败:', book.title, e)
+        }
+      }
+    }
   }
   
   // ============ 分组操作 ============
@@ -460,6 +494,11 @@ export const useLibraryStore = defineStore('library', () => {
       const book = currentBooks.value[index]
       currentBooks.value.splice(index, 1)
       currentBooks.value.unshift(book)
+      
+      currentBooks.value.forEach((b, i) => {
+        b.order = i
+      })
+      
       await saveBooks()
     }
   }
@@ -494,6 +533,8 @@ export const useLibraryStore = defineStore('library', () => {
     reorderBook,
     loadShelfBooks,
     saveBooks,
+    updateBookProgress,
+    loadBooksProgress,
     
     // 分组操作
     createGroup,
