@@ -26,6 +26,8 @@ export function DeleteBookmark(arg1:string,arg2:string):Promise<void>;
 
 export function DeleteDirectory(arg1:string):Promise<void>;
 
+export function DeleteNote(arg1:string,arg2:string):Promise<void>;
+
 export function DeleteShelf(arg1:string):Promise<void>;
 
 export function DownloadShelf(arg1:string):Promise<string>;
@@ -47,6 +49,8 @@ export function GetEpubImageByPath(arg1:string,arg2:string):Promise<Array<number
 export function GetFileBytes(arg1:string):Promise<Array<number>>;
 
 export function GetFileInfo(arg1:string):Promise<main.FileInfo>;
+
+export function GetNotes(arg1:string):Promise<string>;
 
 export function GetPendingEpubPath():Promise<string>;
 
@@ -81,6 +85,8 @@ export function SaveBookCover(arg1:string,arg2:string,arg3:string):Promise<void>
 export function SaveBookmark(arg1:string,arg2:string):Promise<void>;
 
 export function SaveFile(arg1:string,arg2:string,arg3:Array<number>):Promise<string>;
+
+export function SaveNote(arg1:string,arg2:string):Promise<void>;
 
 export function SaveProgress(arg1:string,arg2:string):Promise<void>;
 

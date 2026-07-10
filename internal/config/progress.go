@@ -22,6 +22,17 @@ type SearchHistoryItem struct {
 	Timestamp int64  `json:"timestamp"`
 }
 
+// Note 笔记信息
+type Note struct {
+	CFI          string  `json:"cfi"`
+	Percentage   float64 `json:"percentage"`
+	Timestamp    int64   `json:"timestamp"`
+	ChapterTitle string  `json:"chapterTitle,omitempty"`
+	Content      string  `json:"content"`
+	SelectedText string  `json:"selectedText,omitempty"`
+	Color        string  `json:"color,omitempty"`
+}
+
 // BookConfig 书籍配置结构体（包含元数据和进度）
 type BookConfig struct {
 	ID               string              `json:"id"`
@@ -33,6 +44,7 @@ type BookConfig struct {
 	CreatedAt        int64               `json:"createdAt"`
 	LastCFI          string              `json:"last_cfi"`
 	Bookmarks        []Bookmark          `json:"bookmarks,omitempty"`
+	Notes            []Note              `json:"notes,omitempty"`
 	SearchHistory    []SearchHistoryItem `json:"searchHistory,omitempty"`
 	// 以下字段用于保留 EPUB 元数据
 	Description string   `json:"description,omitempty"`
@@ -264,6 +276,88 @@ func ClearSearchHistory(filePath string) error {
 	json.Unmarshal(data, &config)
 
 	config.SearchHistory = nil
+
+	prettyData, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(configPath, prettyData, 0644)
+}
+
+// SaveNote 保存笔记到书籍同目录的 config.json
+func SaveNote(filePath, noteJSON string) error {
+	dir := filepath.Dir(filePath)
+	configPath := filepath.Join(dir, "config.json")
+
+	var config BookConfig
+	data, err := os.ReadFile(configPath)
+	if err == nil {
+		json.Unmarshal(data, &config)
+	}
+
+	var note Note
+	if err := json.Unmarshal([]byte(noteJSON), &note); err != nil {
+		return err
+	}
+
+	for i, n := range config.Notes {
+		if n.CFI == note.CFI {
+			config.Notes[i] = note
+			goto save
+		}
+	}
+
+	config.Notes = append(config.Notes, note)
+
+save:
+	prettyData, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(configPath, prettyData, 0644)
+}
+
+// GetNotes 从书籍同目录的 config.json 读取笔记列表
+func GetNotes(filePath string) ([]Note, error) {
+	dir := filepath.Dir(filePath)
+	configPath := filepath.Join(dir, "config.json")
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return nil, err
+	}
+
+	var config BookConfig
+	if err := json.Unmarshal(data, &config); err != nil {
+		return nil, err
+	}
+
+	return config.Notes, nil
+}
+
+// DeleteNote 删除指定 CFI 的笔记
+func DeleteNote(filePath, cfi string) error {
+	dir := filepath.Dir(filePath)
+	configPath := filepath.Join(dir, "config.json")
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return err
+	}
+
+	var config BookConfig
+	json.Unmarshal(data, &config)
+
+	newNotes := make([]Note, 0, len(config.Notes))
+	for _, n := range config.Notes {
+		if n.CFI != cfi {
+			newNotes = append(newNotes, n)
+		}
+	}
+
+	config.Notes = newNotes
 
 	prettyData, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {

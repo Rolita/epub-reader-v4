@@ -222,6 +222,16 @@ export async function deleteBookmark(filePath: string, cfi: string): Promise<voi
   }
 }
 
+export interface Note {
+  cfi: string;
+  percentage: number;
+  timestamp: number;
+  chapterTitle?: string;
+  content: string;
+  selectedText?: string;
+  color?: string;
+}
+
 export interface SearchHistoryItem {
   keyword: string;
   timestamp: number;
@@ -259,6 +269,111 @@ export async function clearSearchHistory(filePath: string): Promise<void> {
     console.log('搜索历史已清除')
   } catch (err) {
     console.error('清除搜索历史失败:', err)
+    throw err
+  }
+}
+
+/**
+ * 获取选中文本的 CFI 位置
+ * @param rendition epub.js rendition 实例
+ * @returns CFI 字符串，失败返回空字符串
+ */
+function getSelectionCfi(rendition: any): string {
+  try {
+    const contents = rendition.getContents ? rendition.getContents() : []
+    for (const content of contents) {
+      const selection = content.window.getSelection()
+      if (selection && !selection.isCollapsed) {
+        const range = selection.getRangeAt(0)
+        return content.cfiFromRange(range)
+      }
+    }
+    return ''
+  } catch (err) {
+    console.error('获取选中文本CFI失败:', err)
+    return ''
+  }
+}
+
+/**
+ * 保存笔记
+ * @param rendition epub.js rendition 实例
+ * @param filePath 书籍文件路径
+ * @param selectedText 选中的文本内容
+ * @param content 用户笔记内容（可选）
+ * @param color 高亮颜色（可选）
+ * @returns 保存的笔记数据，失败返回 null
+ */
+export async function saveNote(
+  rendition: any,
+  filePath: string,
+  selectedText: string,
+  content?: string,
+  color?: string
+): Promise<Note | null> {
+  if (!rendition || !selectedText.trim()) return null
+  try {
+    const cfi = getSelectionCfi(rendition)
+    if (!cfi) {
+      console.error('无法获取选中文本的CFI位置')
+      return null
+    }
+
+    const location = rendition.currentLocation()
+    const chapterTitle = location && location.start ? getCurrentChapterTitle(rendition, location) : ''
+    const percentage = location && location.start ? location.start.percentage || 0 : 0
+
+    const note: Note = {
+      cfi: cfi,
+      percentage: percentage,
+      timestamp: Date.now(),
+      chapterTitle,
+      content: content || '',
+      selectedText: selectedText.trim(),
+      color: color || '#FFCDD2'
+    }
+
+    // @ts-ignore
+    await window.go.main.App.SaveNote(filePath, JSON.stringify(note))
+    console.log('笔记已保存:', note)
+    return note
+  } catch (err) {
+    console.error('保存笔记失败:', err)
+    return null
+  }
+}
+
+/**
+ * 获取书籍的所有笔记
+ * @param filePath 书籍文件路径
+ * @returns 笔记列表，失败返回 null
+ */
+export async function getNotes(filePath: string): Promise<Note[] | null> {
+  try {
+    // @ts-ignore
+    const result = await window.go.main.App.GetNotes(filePath)
+    if (result) {
+      return JSON.parse(result)
+    }
+    return null
+  } catch (err) {
+    console.error('获取笔记失败:', err)
+    return null
+  }
+}
+
+/**
+ * 删除指定笔记
+ * @param filePath 书籍文件路径
+ * @param cfi 笔记的 CFI
+ */
+export async function deleteNote(filePath: string, cfi: string): Promise<void> {
+  try {
+    // @ts-ignore
+    await window.go.main.App.DeleteNote(filePath, cfi)
+    console.log('笔记已删除:', cfi)
+  } catch (err) {
+    console.error('删除笔记失败:', err)
     throw err
   }
 }

@@ -492,6 +492,10 @@ const handleBookmarkSaved = () => {
   sidebarRef.value?.refreshBookmarks()
 }
 
+const handleNoteSaved = () => {
+  sidebarRef.value?.refreshNotes()
+}
+
 // 保存阅读进度
 const handleSaveProgress = async () => {
   if (layout.value.mode === 'single') {
@@ -1389,18 +1393,6 @@ onUnmounted(() => {
           title="笔记"
         ><NoteIcon :size="22" /></button>
         <button 
-          class="func-btn" 
-          @click="handleRefresh" 
-          title="刷新"
-        ><RefreshIcon :size="22" /></button>
-        <button 
-          class="func-btn" 
-          :class="{ active: isDownloading }"
-          @click="handleDownloadFromCloud" 
-          :disabled="isDownloading"
-          title="从云端下载"
-        ><DownloadIcon :size="22" /></button>
-        <button 
           v-if="false"
           class="func-btn" 
           @click="handleRestoreProgress" 
@@ -1415,6 +1407,18 @@ onUnmounted(() => {
       </div>
       
       <div class="function-bottom">
+        <button 
+          class="func-btn" 
+          @click="handleRefresh" 
+          title="刷新"
+        ><RefreshIcon :size="22" /></button>
+        <button 
+          class="func-btn" 
+          :class="{ active: isDownloading }"
+          @click="handleDownloadFromCloud" 
+          :disabled="isDownloading"
+          title="从云端下载"
+        ><DownloadIcon :size="22" /></button>
         <button class="func-btn settings" @click="openSettingsTab" title="设置"><SettingsIcon :size="22" /></button>
       </div>
     </aside>
@@ -1635,6 +1639,7 @@ onUnmounted(() => {
                 }"
                 @ready="handleReaderReady"
                 @bookmark-saved="handleBookmarkSaved"
+                @note-saved="handleNoteSaved"
               />
             </template>
           </div>
@@ -1699,6 +1704,7 @@ onUnmounted(() => {
                       @scroll="switchTab(tab.id, pane.id)"
                       @ready="handleReaderReady"
                       @bookmark-saved="handleBookmarkSaved"
+                      @note-saved="handleNoteSaved"
                       :ref="(el: any) => { 
                         if (el) readerRefs.set(tab.id, el)
                         else readerRefs.delete(tab.id)
@@ -1769,6 +1775,7 @@ onUnmounted(() => {
                       @scroll="switchTab(tab.id, pane.id)"
                       @ready="handleReaderReady"
                       @bookmark-saved="handleBookmarkSaved"
+                      @note-saved="handleNoteSaved"
                       :ref="(el: any) => { 
                         if (el) readerRefs.set(tab.id, el)
                         else readerRefs.delete(tab.id)

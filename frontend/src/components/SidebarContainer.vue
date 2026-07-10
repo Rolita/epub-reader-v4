@@ -11,13 +11,14 @@
         v-bind="componentProps" 
         :key="componentKey"
         @switch-view="switchView"
-        @jump="handleJump"
-        @preview="handlePreview"
-        @open-shelf="handleOpenShelf"
-        @add-theme="handleAddTheme"
-        @edit-theme="handleEditTheme"
-        @sync-complete="handleSyncComplete"
-        @show-toast="handleShowToast"
+      @jump="handleJump"
+      @preview="handlePreview"
+      @open-shelf="handleOpenShelf"
+      @add-theme="handleAddTheme"
+      @edit-theme="handleEditTheme"
+      @sync-complete="handleSyncComplete"
+      @show-toast="handleShowToast"
+      @edit-note="handleEditNote"
       />
     </keep-alive>
     <!-- 拖拽调整柄 -->
@@ -42,6 +43,7 @@ import BookmarksSidebar from './BookmarksSidebar.vue';
 import TranslateSidebar from './TranslateSidebar.vue';
 import SearchSidebar from './SearchSidebar.vue';
 import NotesSidebar from './NotesSidebar.vue';
+import NoteEditSidebar from './NoteEditSidebar.vue';
 import { useSettingsStore } from '../stores/settings';
 
 const settingsStore = useSettingsStore();
@@ -61,6 +63,7 @@ const currentComponentRef = ref<any>(null);
 const componentProps = ref({});
 const isCollapsed = ref(false);
 const componentKey = ref('shelf');
+const editingNoteData = ref<any>(null);
 
 watch(() => [props.hasActiveBook, props.bookTitle, props.searchInBook, props.highlightSearchKeyword, props.clearSearchHighlight], () => {
   if (currentComponent.value === SearchSidebar) {
@@ -166,8 +169,19 @@ const switchView = (viewName: string) => {
   }
   if (viewName === 'notes') {
     currentComponent.value = NotesSidebar;
-    componentKey.value = 'notes';
-    componentProps.value = {}; // No props needed for now
+    componentKey.value = `notes-${props.filePath}`;
+    componentProps.value = {
+      filePath: props.filePath
+    };
+    settingsStore.showIllustrationSidebar = false;
+  }
+  if (viewName === 'note-edit') {
+    currentComponent.value = NoteEditSidebar;
+    componentKey.value = `note-edit-${editingNoteData.value?.cfi || ''}`;
+    componentProps.value = {
+      filePath: props.filePath,
+      note: editingNoteData.value
+    };
     settingsStore.showIllustrationSidebar = false;
   }
   if (viewName === 'none') {
@@ -176,8 +190,8 @@ const switchView = (viewName: string) => {
 };
 
 // 处理目录跳转，传递给父组件
-const handleJump = (href: string) => {
-  emit('jump', href);
+const handleJump = (payload: any) => {
+  emit('jump', payload);
 };
 
 // 处理图片预览，传递给父组件
@@ -210,8 +224,20 @@ const handleShowToast = (message: string, type: 'success' | 'error') => {
   emit('show-toast', message, type);
 };
 
+// 处理在侧边栏中编辑笔记
+const handleEditNote = (note: any) => {
+  editingNoteData.value = note;
+  switchView('note-edit');
+};
+
 const refreshBookmarks = () => {
   if (currentComponent.value === BookmarksSidebar && currentComponentRef.value) {
+    currentComponentRef.value.refresh();
+  }
+};
+
+const refreshNotes = () => {
+  if (currentComponent.value === NotesSidebar && currentComponentRef.value) {
     currentComponentRef.value.refresh();
   }
 };
@@ -219,11 +245,12 @@ const refreshBookmarks = () => {
 // 暴露方法供父组件调用
 defineExpose({
   switchView,
-  refreshBookmarks
+  refreshBookmarks,
+  refreshNotes
 });
 
 const emit = defineEmits<{
-  (e: 'jump', href: string): void
+  (e: 'jump', payload: any): void
   (e: 'preview', payload: { src: string; alt: string }): void
   (e: 'open-shelf', shelfId: string, shelfName: string): void
   (e: 'add-theme'): void

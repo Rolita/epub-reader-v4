@@ -78,28 +78,33 @@ export const useLibraryStore = defineStore('library', () => {
     return [...groupItems, ...bookItems]
   })
   
-  // 最近阅读的书籍（按 lastReadTime 倒序）
+  // 正在阅读的书籍：有百分比阅读进度的书籍（0 < readingProgress < 100），但未被标记为"已读"
   const recentBooks = computed(() => {
     return [...currentBooks.value]
-      .filter(b => b.lastReadTime && b.lastReadTime > 0)
+      .filter(b => {
+        const isRead = b.readStatus === 'read' || (b.readingProgress !== undefined && b.readingProgress >= 90)
+        return !isRead && b.readingProgress !== undefined && b.readingProgress > 0 && b.readingProgress < 100
+      })
       .sort((a, b) => (b.lastReadTime || 0) - (a.lastReadTime || 0))
   })
   
-  // 已读的书籍（readingProgress >= 90 或 readStatus === 'read'）
+  // 已读的书籍：左下角有"已读"标识的书籍（readStatus === 'read' 或 readingProgress >= 90）
   const readBooks = computed(() => {
     return currentBooks.value.filter(b => {
-      return (b.readingProgress && b.readingProgress >= 90) || b.readStatus === 'read'
+      return b.readStatus === 'read' || (b.readingProgress !== undefined && b.readingProgress >= 90)
     })
   })
   
-  // 未读的书籍（readingProgress < 10 或 readStatus === 'unread' 或未设置）
+  // 未读的书籍：左下角没有标识的书籍（既不在正在阅读，也不在已读）
   const unreadBooks = computed(() => {
     return currentBooks.value.filter(b => {
-      return (!b.readingProgress || b.readingProgress < 10) && b.readStatus !== 'read'
+      const isRead = b.readStatus === 'read' || (b.readingProgress !== undefined && b.readingProgress >= 90)
+      const isReading = !isRead && b.readingProgress !== undefined && b.readingProgress > 0 && b.readingProgress < 100
+      return !isRead && !isReading
     })
   })
   
-  // 收藏的书籍
+  // 收藏的书籍（保持不变）
   const favoriteBooks = computed(() => {
     return currentBooks.value.filter(b => b.isFavorite)
   })

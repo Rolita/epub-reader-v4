@@ -46,6 +46,10 @@ export function DeleteDirectory(arg1) {
   return window['go']['main']['App']['DeleteDirectory'](arg1);
 }
 
+export function DeleteNote(arg1, arg2) {
+  return window['go']['main']['App']['DeleteNote'](arg1, arg2);
+}
+
 export function DeleteShelf(arg1) {
   return window['go']['main']['App']['DeleteShelf'](arg1);
 }
@@ -88,6 +92,10 @@ export function GetFileBytes(arg1) {
 
 export function GetFileInfo(arg1) {
   return window['go']['main']['App']['GetFileInfo'](arg1);
+}
+
+export function GetNotes(arg1) {
+  return window['go']['main']['App']['GetNotes'](arg1);
 }
 
 export function GetPendingEpubPath() {
@@ -156,6 +164,10 @@ export function SaveBookmark(arg1, arg2) {
 
 export function SaveFile(arg1, arg2, arg3) {
   return window['go']['main']['App']['SaveFile'](arg1, arg2, arg3);
+}
+
+export function SaveNote(arg1, arg2) {
+  return window['go']['main']['App']['SaveNote'](arg1, arg2);
 }
 
 export function SaveProgress(arg1, arg2) {

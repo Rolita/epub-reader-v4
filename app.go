@@ -420,6 +420,29 @@ func (a *App) DeleteBookmark(filePath string, cfi string) error {
 	return config.DeleteBookmark(filePath, cfi)
 }
 
+// SaveNote 保存笔记到书籍同目录的 config.json
+func (a *App) SaveNote(filePath string, noteJSON string) error {
+	return config.SaveNote(filePath, noteJSON)
+}
+
+// GetNotes 获取书籍的所有笔记
+func (a *App) GetNotes(filePath string) (string, error) {
+	notes, err := config.GetNotes(filePath)
+	if err != nil {
+		return "", err
+	}
+	data, err := json.Marshal(notes)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+// DeleteNote 删除指定 CFI 的笔记
+func (a *App) DeleteNote(filePath string, cfi string) error {
+	return config.DeleteNote(filePath, cfi)
+}
+
 // SaveSearchHistory 保存搜索历史到书籍同目录的 config.json
 func (a *App) SaveSearchHistory(filePath string, keyword string) error {
 	return config.SaveSearchHistory(filePath, keyword)

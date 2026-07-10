@@ -110,7 +110,7 @@ interface BookCategoryItem {
 }
 
 const bookCategories: BookCategoryItem[] = [
-  { id: 'recent', name: '最近阅读', key: 'recent' },
+  { id: 'recent', name: '正在阅读', key: 'recent' },
   { id: 'read', name: '已读', key: 'read' },
   { id: 'unread', name: '未读', key: 'unread' },
   { id: 'favorite', name: '收藏', key: 'favorite' }
@@ -141,6 +141,11 @@ const isShelfExpanded = (shelfId: string) => {
 const handleCategoryClick = (categoryKey: 'recent' | 'read' | 'unread' | 'favorite' | null, event: Event) => {
   event.stopPropagation()
   store.setActiveBookCategory(categoryKey)
+  // 获取当前激活的书架信息，触发切换到书架tab
+  const currentShelf = store.shelves.find(s => s.id === store.activeShelfId)
+  if (currentShelf) {
+    emit('open-shelf', currentShelf.id, currentShelf.name)
+  }
 }
 
 // 拖拽开始

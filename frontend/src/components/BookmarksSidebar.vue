@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed } from 'vue';
+import { ref, onMounted, onUnmounted, computed, nextTick, watch } from 'vue';
 import BookmarkIcon from './icons/BookmarkIcon.vue';
 import EditIcon from './icons/EditIcon.vue';
 import TrashIcon from './icons/TrashIcon.vue';
@@ -35,6 +35,8 @@ const isLoading = ref(false);
 const editingBookmark = ref<string | null>(null);
 const editingSnippet = ref('');
 const isClickingOtherBookmark = ref(false);
+const editableRefs = ref<Map<string, HTMLElement>>(new Map());
+const expandedGroups = ref<Set<string>>(new Set());
 
 const groupedBookmarks = computed<GroupedBookmarks[]>(() => {
   const groups: { [key: string]: Bookmark[] } = {};
@@ -52,6 +54,18 @@ const groupedBookmarks = computed<GroupedBookmarks[]>(() => {
     bookmarks
   }));
 });
+
+const toggleGroup = (chapterTitle: string) => {
+  if (expandedGroups.value.has(chapterTitle)) {
+    expandedGroups.value.delete(chapterTitle);
+  } else {
+    expandedGroups.value.add(chapterTitle);
+  }
+};
+
+const isGroupExpanded = (chapterTitle: string) => {
+  return expandedGroups.value.has(chapterTitle);
+};
 
 const loadBookmarks = async () => {
   if (!props.filePath) {
@@ -100,6 +114,13 @@ const handleDeleteBookmark = async (bookmark: Bookmark) => {
 const startEdit = (bookmark: Bookmark) => {
   editingBookmark.value = bookmark.cfi;
   editingSnippet.value = bookmark.snippet || '';
+  nextTick(() => {
+    const editableDiv = editableRefs.value.get(bookmark.cfi);
+    if (editableDiv) {
+      editableDiv.innerText = editingSnippet.value;
+      editableDiv.focus();
+    }
+  });
 };
 
 const saveEdit = async (bookmark: Bookmark) => {
@@ -112,7 +133,7 @@ const saveEdit = async (bookmark: Bookmark) => {
 
   const updatedBookmark: Bookmark = {
     ...bookmark,
-    snippet: editingSnippet.value.trim()
+    snippet: editingSnippet.value
   };
 
   try {
@@ -120,7 +141,7 @@ const saveEdit = async (bookmark: Bookmark) => {
     await window.go.main.App.SaveBookmark(props.filePath, JSON.stringify(updatedBookmark));
     const index = bookmarks.value.findIndex(b => b.cfi === bookmark.cfi);
     if (index !== -1) {
-      bookmarks.value[index].snippet = editingSnippet.value.trim();
+      bookmarks.value[index].snippet = editingSnippet.value;
     }
     editingBookmark.value = null;
     console.log('书签已更新');
@@ -138,10 +159,39 @@ const handleBookmarkSaved = () => {
   loadBookmarks();
 };
 
+const isFirstLoad = ref(true);
+
 onMounted(() => {
   loadBookmarks();
   eventBus.on('bookmark-saved', handleBookmarkSaved);
 });
+
+watch(bookmarks, (newBookmarks) => {
+  if (isFirstLoad.value && newBookmarks.length > 0) {
+    // 首次加载到数据时展开所有分组
+    const groups = new Set<string>();
+    newBookmarks.forEach(bookmark => {
+      groups.add(bookmark.chapterTitle || '未知章节');
+    });
+    expandedGroups.value = groups;
+    isFirstLoad.value = false;
+  } else if (!isFirstLoad.value) {
+    // 后续更新时，只保留当前已有的分组，保持展开状态不变
+    const currentGroups = new Set<string>();
+    newBookmarks.forEach(bookmark => {
+      currentGroups.add(bookmark.chapterTitle || '未知章节');
+    });
+    
+    // 移除不存在的分组，保留已有的分组展开状态
+    const newExpanded = new Set<string>();
+    expandedGroups.value.forEach(group => {
+      if (currentGroups.has(group)) {
+        newExpanded.add(group);
+      }
+    });
+    expandedGroups.value = newExpanded;
+  }
+}, { immediate: true });
 
 onUnmounted(() => {
   eventBus.off('bookmark-saved', handleBookmarkSaved);
@@ -193,12 +243,17 @@ function formatDate(timestamp: number): string {
           :key="group.chapterTitle"
           class="bookmark-group"
         >
-          <div class="group-header">
-            <span class="group-title">{{ group.chapterTitle }}</span>
+          <div class="group-header" @click="toggleGroup(group.chapterTitle)">
+            <div class="group-header-left">
+              <span class="expand-icon" :class="{ 'expanded': isGroupExpanded(group.chapterTitle) }">
+                ▶
+              </span>
+              <span class="group-title">{{ group.chapterTitle }}</span>
+            </div>
             <span class="group-count">{{ group.bookmarks.length }}</span>
           </div>
           
-          <div class="group-bookmarks">
+          <div class="group-bookmarks" v-show="isGroupExpanded(group.chapterTitle)">
             <div
               v-for="bookmark in group.bookmarks"
               :key="bookmark.cfi"
@@ -207,16 +262,22 @@ function formatDate(timestamp: number): string {
               @click="handleBookmarkClick(bookmark)"
             >
               <div 
+                v-if="editingBookmark !== bookmark.cfi"
                 class="bookmark-snippet"
-                :class="{ 'editing': editingBookmark === bookmark.cfi }"
-                :contenteditable="editingBookmark === bookmark.cfi"
+                @click="(e) => { if (editingBookmark === bookmark.cfi) e.stopPropagation() }"
+                v-html="(bookmark.snippet || '无预览内容').replace(/\n/g, '<br>')"
+              >
+              </div>
+              <div 
+                v-else
+                class="bookmark-snippet editing"
+                contenteditable="true"
+                :ref="(el) => { if (el) editableRefs.set(bookmark.cfi, el as HTMLElement) }"
                 @input="(e) => { editingSnippet = (e.target as HTMLElement).innerText }"
-                @blur="saveEdit(bookmark)"
                 @keydown.enter.ctrl="saveEdit(bookmark)"
                 @keydown.escape="cancelEdit"
-                @click="(e) => { if (editingBookmark === bookmark.cfi) e.stopPropagation() }"
+                @click.stop
               >
-                {{ editingBookmark === bookmark.cfi ? editingSnippet : (bookmark.snippet || '无预览内容') }}
               </div>
               
               <div class="bookmark-footer">
@@ -304,6 +365,24 @@ function formatDate(timestamp: number): string {
   justify-content: space-between;
   align-items: center;
   padding: 4px 0;
+  cursor: pointer;
+}
+
+.group-header-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.expand-icon {
+  font-size: 0.6rem;
+  color: var(--text-muted);
+  transition: transform 0.2s ease;
+  transform: rotate(0deg);
+}
+
+.expand-icon.expanded {
+  transform: rotate(90deg);
 }
 
 .group-title {

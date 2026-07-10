@@ -1,9 +1,12 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import IllustrationIcon from './icons/IllustrationIcon.vue'
 import { useSettingsStore, type IllustrationItem } from '../stores/settings'
 
 const settingsStore = useSettingsStore()
+
+const expandedGroups = ref<Set<string>>(new Set())
+const isFirstLoad = ref(true)
 
 // 按章节分组
 const groupedIllustrations = computed(() => {
@@ -25,6 +28,48 @@ const groupedIllustrations = computed(() => {
   
   return groups
 })
+
+// 切换分组展开/收缩
+const toggleGroup = (chapterHref: string) => {
+  if (expandedGroups.value.has(chapterHref)) {
+    expandedGroups.value.delete(chapterHref)
+  } else {
+    expandedGroups.value.add(chapterHref)
+  }
+}
+
+// 检查分组是否展开
+const isGroupExpanded = (chapterHref: string) => {
+  return expandedGroups.value.has(chapterHref)
+}
+
+// 监听插画变化，保持展开状态
+watch(() => settingsStore.illustrations, (newIllustrations) => {
+  if (isFirstLoad.value && newIllustrations.length > 0) {
+    // 首次加载到数据时展开所有分组
+    const groups = new Set<string>()
+    for (const illustration of newIllustrations) {
+      groups.add(illustration.chapterHref || 'unknown')
+    }
+    expandedGroups.value = groups
+    isFirstLoad.value = false
+  } else if (!isFirstLoad.value) {
+    // 后续更新时，保持当前展开状态
+    const currentGroups = new Set<string>()
+    for (const illustration of newIllustrations) {
+      currentGroups.add(illustration.chapterHref || 'unknown')
+    }
+    
+    // 移除不存在的分组，保留已有的分组展开状态
+    const newExpanded = new Set<string>()
+    expandedGroups.value.forEach(group => {
+      if (currentGroups.has(group)) {
+        newExpanded.add(group)
+      }
+    })
+    expandedGroups.value = newExpanded
+  }
+}, { immediate: true })
 
 const emit = defineEmits<{
   jump: [payload: { href: string; cfi: string }]
@@ -71,11 +116,16 @@ const handleImageContextMenu = (e: MouseEvent, illustration: IllustrationItem) =
       <!-- 按章节分组的插图 -->
       <div v-else class="illustration-groups">
         <div v-for="group in groupedIllustrations" :key="group.chapterHref" class="illustration-group">
-          <div class="group-header">
-            <span class="group-title">{{ group.chapterTitle }}</span>
+          <div class="group-header" @click="toggleGroup(group.chapterHref)">
+            <div class="group-header-left">
+              <span class="expand-icon" :class="{ 'expanded': isGroupExpanded(group.chapterHref) }">
+                ▶
+              </span>
+              <span class="group-title">{{ group.chapterTitle }}</span>
+            </div>
             <span class="group-count">{{ group.illustrations.length }} 张</span>
           </div>
-          <div class="group-list">
+          <div class="group-list" v-show="isGroupExpanded(group.chapterHref)">
             <div 
               v-for="illustration in group.illustrations" 
               :key="illustration.index"
@@ -164,6 +214,24 @@ const handleImageContextMenu = (e: MouseEvent, illustration: IllustrationItem) =
   align-items: center;
   justify-content: space-between;
   padding: 0 4px;
+  cursor: pointer;
+}
+
+.group-header-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.expand-icon {
+  font-size: 0.6rem;
+  color: var(--text-muted);
+  transition: transform 0.2s ease;
+  transform: rotate(0deg);
+}
+
+.expand-icon.expanded {
+  transform: rotate(90deg);
 }
 
 .group-title {

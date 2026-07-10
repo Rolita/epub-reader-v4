@@ -44,6 +44,8 @@
       @exit-fullscreen="exitFullscreen"
       @mouseleave="showFunctionMenu = false"
       @bookmark-saved="handleBookmarkSaved"
+      @copy-selected="copySelectedText"
+      @save-note="saveSelectedTextAsNote"
     />
 
     <!-- 图片预览组件 -->
@@ -68,7 +70,7 @@ import { useBookStore, TocItem } from '../stores/book';
 import { useSettingsStore } from '../stores/settings';
 import { useThemeStore } from '../stores/theme';
 import { useLibraryStore } from '../stores/library';
-import { saveReaderProgress, restoreReaderProgress, saveBookmark } from '../composables/useReaderProgress';
+import { saveReaderProgress, restoreReaderProgress, saveBookmark, saveNote, getNotes, type Note } from '../composables/useReaderProgress';
 import { eventBus } from '../composables/useEventBus';
 import FullscreenIcon from './icons/FullscreenIcon.vue';
 import ReaderFunctionMenu from './ReaderFunctionMenu.vue';
@@ -79,6 +81,7 @@ const emit = defineEmits<{
   (e: 'scroll'): void;
   (e: 'ready'): void;
   (e: 'bookmark-saved'): void;
+  (e: 'note-saved'): void;
 }>();
 const viewerContainer = ref<HTMLElement | null>(null);
 
@@ -250,6 +253,14 @@ const injectPowerfulStyles = () => {
       border-radius: 2px !important;
       padding: 0 2px !important;
     }
+    /* 10. 笔记高亮样式 */
+    .readest-note-highlight {
+      --note-color: 255, 205, 210;
+      background-color: rgba(var(--note-color), 0.8) !important;
+      color: #000000 !important;
+      border-radius: 2px !important;
+      padding: 0 2px !important;
+    }
   `;
 
   // 直接注入到 iframe DOM，避免 epub.js append 累积 style 标签
@@ -265,6 +276,270 @@ const injectPowerfulStyles = () => {
     }
     style.textContent = css;
   });
+};
+
+// 笔记缓存，用于优化性能
+let notesCache: Map<string, any[]> = new Map();
+let lastAppliedNotesHash = '';
+
+// 简单的哈希函数，用于检测笔记是否变化
+function getNotesHash(notes: any[]): string {
+  return notes.map(n => `${n.cfi}${n.content}${n.color}`).join('|');
+}
+
+const clearNoteHighlights = (targetCfi?: string) => {
+  if (!rendition) return;
+  const contents = rendition.getContents ? rendition.getContents() : [];
+  contents.forEach((content: any) => {
+    const doc = content.document;
+    if (!doc) return;
+    
+    let highlights: NodeListOf<HTMLElement>;
+    if (targetCfi) {
+      // 只清除特定 CFI 的高亮
+      highlights = doc.querySelectorAll(`.readest-note-highlight[data-note-cfi="${targetCfi}"]`);
+    } else {
+      // 清除所有高亮
+      highlights = doc.querySelectorAll('.readest-note-highlight');
+    }
+    
+    highlights.forEach((span: HTMLElement) => {
+      const parent = span.parentNode as HTMLElement;
+      if (parent) {
+        const text = span.textContent || '';
+        const textNode = doc.createTextNode(text);
+        parent.replaceChild(textNode, span);
+      }
+    });
+    
+    // 只在清除所有高亮时才合并相邻文本节点
+    if (!targetCfi) {
+      const mergeAdjacentTextNodes = (node: Node) => {
+        if (node.nodeType === Node.TEXT_NODE) {
+          while (node.nextSibling && node.nextSibling.nodeType === Node.TEXT_NODE) {
+            node.textContent = (node.textContent || '') + (node.nextSibling.textContent || '');
+            node.parentNode?.removeChild(node.nextSibling);
+          }
+        } else {
+          for (let i = 0; i < node.childNodes.length; i++) {
+            mergeAdjacentTextNodes(node.childNodes[i]);
+          }
+        }
+      };
+      mergeAdjacentTextNodes(doc.body);
+    }
+  });
+};
+
+// 辅助函数：将十六进制颜色转换为 rgb 值（不带透明度）
+const hexToRgb = (hex: string) => {
+  let r = 0, g = 0, b = 0;
+  
+  // 3位缩写
+  if (hex.length === 4) {
+    r = parseInt(hex[1] + hex[1], 16);
+    g = parseInt(hex[2] + hex[2], 16);
+    b = parseInt(hex[3] + hex[3], 16);
+  } 
+  // 6位完整
+  else if (hex.length === 7) {
+    r = parseInt(hex[1] + hex[2], 16);
+    g = parseInt(hex[3] + hex[4], 16);
+    b = parseInt(hex[5] + hex[6], 16);
+  }
+  
+  return `${r}, ${g}, ${b}`;
+};
+
+// 使用 CFI 范围来精确高亮文本
+const highlightNoteByCfi = (content: any, note: any) => {
+  if (!content.cfiFromRange || !content.rangeFromCfi) {
+    console.warn('epub.js 内容不支持 CFI 范围操作，降级到文本匹配');
+    return false;
+  }
+  
+  try {
+    const doc = content.document;
+    if (!doc) return false;
+    
+    // 尝试通过 CFI 直接获取范围
+    let range: Range | null = null;
+    try {
+      range = content.rangeFromCfi(note.cfi);
+    } catch (e) {
+      // CFI 可能失效，降级到文本匹配
+      console.warn('CFI 范围获取失败，使用文本匹配:', note.cfi);
+      return false;
+    }
+    
+    if (!range) return false;
+    
+    // 使用范围创建高亮
+    const highlightRange = (rangeToHighlight: Range) => {
+      const span = doc.createElement('mark');
+      span.className = 'readest-note-highlight';
+      span.setAttribute('data-note-cfi', note.cfi);
+      if (note.color) {
+        span.style.setProperty('--note-color', hexToRgb(note.color), 'important');
+      }
+      
+      try {
+        rangeToHighlight.surroundContents(span);
+        return true;
+      } catch (e) {
+        // 如果不能直接 surround（跨节点），使用更简单的方法
+        const fragment = rangeToHighlight.extractContents();
+        span.appendChild(fragment);
+        rangeToHighlight.insertNode(span);
+        return true;
+      }
+    };
+    
+    return highlightRange(range);
+  } catch (err) {
+    console.warn('CFI 高亮失败:', err);
+    return false;
+  }
+};
+
+// 优化的文本匹配高亮（作为降级方案）
+const highlightNoteByText = (content: any, note: any) => {
+  if (!note.selectedText || !note.selectedText.trim()) return false;
+  
+  const doc = content.document;
+  if (!doc) return false;
+  
+  const searchText = note.selectedText.trim();
+  const escapedText = searchText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  
+  // 使用更高效的 TreeWalker 而不是完整遍历
+  const walker = doc.createTreeWalker(
+    doc.body,
+    NodeFilter.SHOW_TEXT,
+    {
+      acceptNode: (node: Node) => {
+        // 跳过已高亮的节点
+        const parent = node.parentNode as HTMLElement;
+        if (parent?.classList?.contains('readest-note-highlight') || 
+            parent?.classList?.contains('readest-search-highlight')) {
+          return NodeFilter.FILTER_REJECT;
+        }
+        const text = node.textContent || '';
+        return text.length >= searchText.length ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP;
+      }
+    }
+  );
+  
+  let found = false;
+  const node: Node | null = walker.currentNode;
+  
+  while (walker.nextNode()) {
+    const textNode = walker.currentNode as Text;
+    const text = textNode.textContent || '';
+    const index = text.indexOf(searchText);
+    
+    if (index !== -1) {
+      // 找到匹配，进行高亮
+      const before = text.substring(0, index);
+      const matchText = text.substring(index, index + searchText.length);
+      const after = text.substring(index + searchText.length);
+      
+      const span = doc.createElement('mark');
+      span.className = 'readest-note-highlight';
+      span.setAttribute('data-note-cfi', note.cfi);
+      span.textContent = matchText;
+      if (note.color) {
+        span.style.setProperty('--note-color', hexToRgb(note.color), 'important');
+      }
+      
+      const parent = textNode.parentNode as HTMLElement;
+      if (before) {
+        textNode.textContent = before;
+        parent.insertBefore(span, textNode.nextSibling);
+      } else {
+        parent.replaceChild(span, textNode);
+      }
+      
+      if (after) {
+        const afterNode = doc.createTextNode(after);
+        parent.insertBefore(afterNode, span.nextSibling);
+      }
+      
+      found = true;
+      break; // 只高亮第一个匹配
+    }
+  }
+  
+  return found;
+};
+
+const applyNoteHighlights = async (incrementalNoteCfi?: string) => {
+  if (!rendition || !props.filePath) return;
+  
+  try {
+    const notes = await getNotes(props.filePath);
+    const currentNotes = notes || [];
+    
+    // 检查笔记是否真的变化了（除非是强制刷新）
+    const currentHash = getNotesHash(currentNotes);
+    const isForcedRefresh = lastAppliedNotesHash === '';
+    if (!incrementalNoteCfi && !isForcedRefresh && currentHash === lastAppliedNotesHash) {
+      console.log('笔记未变化，跳过高亮更新');
+      return;
+    }
+    
+    const contents = rendition.getContents ? rendition.getContents() : [];
+    if (contents.length === 0) return;
+    
+    if (incrementalNoteCfi) {
+      // 增量更新：只处理变化的笔记
+      const noteToUpdate = currentNotes.find(n => n.cfi === incrementalNoteCfi);
+      
+      // 先清除旧的高亮
+      clearNoteHighlights(incrementalNoteCfi);
+      
+      if (noteToUpdate) {
+        // 应用新高亮
+        for (const content of contents) {
+          let highlighted = highlightNoteByCfi(content, noteToUpdate);
+          if (!highlighted) {
+            highlightNoteByText(content, noteToUpdate);
+          }
+        }
+      }
+      
+      console.log('增量更新笔记高亮:', incrementalNoteCfi);
+    } else {
+      // 完整更新：清除并重新应用所有
+      clearNoteHighlights();
+      
+      for (const note of currentNotes) {
+        let highlighted = false;
+        
+        for (const content of contents) {
+          highlighted = highlightNoteByCfi(content, note);
+          if (highlighted) break;
+        }
+        
+        if (!highlighted) {
+          for (const content of contents) {
+            highlightNoteByText(content, note);
+          }
+        }
+      }
+      
+      lastAppliedNotesHash = currentHash;
+      console.log('完整应用笔记高亮:', currentNotes.length, '个笔记');
+    }
+  } catch (err) {
+    console.error('应用笔记高亮失败:', err);
+  }
+  
+  // 确保 lastAppliedNotesHash 被重置，这样即使笔记没变化，下次强制刷新也会生效
+  // 但是如果是增量更新，我们不需要重置
+  if (!incrementalNoteCfi) {
+    // 这里不重置，保持正常逻辑
+  }
 };
 
 // 应用主题到 EPUB 内容
@@ -480,6 +755,13 @@ const clearInlineStyles = () => {
       if (currentSearchKeyword.value) {
         highlightSearchKeyword(currentSearchKeyword.value);
       }
+      
+      // 重新应用笔记高亮 - 清除旧的hash强制刷新
+      lastAppliedNotesHash = '';
+      // 稍微延迟一下确保样式应用完成
+      setTimeout(() => {
+        applyNoteHighlights();
+      }, 100);
     });
   });
 };
@@ -670,6 +952,36 @@ const initReader = async () => {
           }
           emit('click')
         });
+
+        // 监听文本选择变化，通过 postMessage 传递给主窗口
+        contents.window.addEventListener('selectionchange', () => {
+          const selection = contents.window.getSelection()
+          if (!selection || selection.isCollapsed || !selection.toString().trim()) {
+            window.parent.postMessage({
+              type: 'epub-selection-change',
+              hasSelection: false
+            }, '*')
+            return
+          }
+
+          const range = selection.getRangeAt(0)
+          const rect = range.getBoundingClientRect()
+          const selectedText = selection.toString()
+
+          window.parent.postMessage({
+            type: 'epub-selection-change',
+            hasSelection: true,
+            text: selectedText,
+            rect: {
+              left: rect.left,
+              top: rect.top,
+              width: rect.width,
+              height: rect.height,
+              bottom: rect.bottom
+            }
+          }, '*')
+        });
+
       });
 
       // 7. 注册内联样式清理（在每章渲染后执行）
@@ -713,6 +1025,11 @@ const initReader = async () => {
         applyTypography();
         applyTheme();
       }
+      
+      // 11. 应用笔记高亮
+      setTimeout(() => {
+        applyNoteHighlights();
+      }, 300);
 
       console.log("阅读器初始化完成");
       
@@ -890,6 +1207,75 @@ const handleBookmarkSaved = () => {
   console.log('书签保存成功');
   emit('bookmark-saved');
   eventBus.emit('bookmark-saved');
+};
+
+// 获取 iframe 中选中的文本
+const getSelectedTextFromIframe = (): string => {
+  if (!rendition || !rendition.getContents) return ''
+  
+  const contents = rendition.getContents()
+  for (const content of contents) {
+    const selection = content.window.getSelection()
+    if (selection && !selection.isCollapsed) {
+      return selection.toString()
+    }
+  }
+  
+  return ''
+}
+
+// 复制选中的文本
+const copySelectedText = async () => {
+  const text = getSelectedTextFromIframe()
+  if (!text) {
+    console.log('未选中任何文本')
+    return
+  }
+  
+  try {
+    await navigator.clipboard.writeText(text)
+    console.log('复制成功:', text)
+  } catch (err) {
+    console.error('复制失败:', err)
+  }
+};
+
+// 保存当前操作的笔记 CFI，用于增量更新
+let lastSavedNoteCfi: string | null = null;
+
+const handleNoteSaved = async (noteCfi?: string) => {
+  console.log('笔记保存成功:', noteCfi || '全部刷新');
+  emit('note-saved');
+  
+  // 只有当我们自己不是发送者时才再次发送事件（避免循环）
+  // 使用增量更新
+  setTimeout(() => {
+    applyNoteHighlights(noteCfi || (lastSavedNoteCfi ?? undefined));
+    lastSavedNoteCfi = null;
+  }, 50);
+};
+
+// 保存选中的文本为笔记
+const saveSelectedTextAsNote = async () => {
+  const text = getSelectedTextFromIframe()
+  if (!text) {
+    console.log('未选中任何文本')
+    return
+  }
+  
+  console.log('准备保存笔记，选中文本:', text)
+  
+  try {
+    const result = await saveNote(rendition, props.filePath, text)
+    if (result) {
+      lastSavedNoteCfi = result.cfi;
+      await handleNoteSaved(result.cfi)
+    } else {
+      console.error('笔记保存失败：saveNote 返回 null')
+    }
+  } catch (err) {
+    console.error('保存笔记失败:', err)
+  }
 };
 
 // 退出全屏
@@ -1155,9 +1541,16 @@ const highlightSearchKeyword = (keyword: string) => {
 const jumpTo = (href: string, cfi?: string) => {
   if (rendition) {
     const target = cfi || href
-    console.log('[插图跳转] 跳转到:', target)
+    console.log('[跳转] 跳转到:', target)
+    
+    clearNoteHighlights();
+    // 强制刷新笔记高亮
+    lastAppliedNotesHash = '';
+    
     rendition.display(target).then(() => {
       viewerContainer.value?.focus();
+      // 立即应用高亮，不延迟
+      applyNoteHighlights();
     });
   }
 };
@@ -1411,6 +1804,9 @@ const handleBeforeUnload = () => {
   saveProgressAndUpdateLibrary()
 }
 
+// 当前选中的文本
+const selectedText = ref('')
+
 onMounted(async () => {
   await initReader();
   window.addEventListener('keydown', handleKey);
@@ -1420,6 +1816,7 @@ onMounted(async () => {
   document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
   document.addEventListener('mozfullscreenchange', handleFullscreenChange);
   document.addEventListener('MSFullscreenChange', handleFullscreenChange);
+  eventBus.on('note-saved', handleNoteSaved);
   // 每 10 分钟自动保存阅读进度
   autoSaveTimer = setInterval(() => {
     saveProgressAndUpdateLibrary()
@@ -1434,6 +1831,7 @@ onUnmounted(() => {
   document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
   document.removeEventListener('mozfullscreenchange', handleFullscreenChange);
   document.removeEventListener('MSFullscreenChange', handleFullscreenChange);
+  eventBus.off('note-saved', handleNoteSaved);
   clearTimeout(resizeTimer);
   clearInterval(autoSaveTimer);
   saveProgressAndUpdateLibrary()
@@ -1764,4 +2162,5 @@ watch(() => props.filePath, async () => {
     height: 38px;
   }
 }
+
 </style>

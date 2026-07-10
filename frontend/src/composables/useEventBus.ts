@@ -1,4 +1,4 @@
-export type EventType = 'bookmark-saved' | 'bookmark-deleted';
+export type EventType = 'bookmark-saved' | 'bookmark-deleted' | 'note-saved';
 export type EventCallback = (data?: any) => void;
 
 class EventBus {
