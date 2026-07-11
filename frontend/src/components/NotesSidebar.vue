@@ -192,15 +192,31 @@ const handleNoteSaved = () => {
 };
 
 const isFirstLoad = ref(true);
+const forceExpandChapter = ref<string | null>(null);
+
+const handleSidebarSwitch = (data: any) => {
+  if (data && data.view === 'notes' && data.chapterTitle) {
+    forceExpandChapter.value = data.chapterTitle;
+  }
+};
 
 onMounted(() => {
   console.log('NotesSidebar: 组件挂载，filePath:', props.filePath);
   loadNotes();
   eventBus.on('note-saved', handleNoteSaved);
+  eventBus.on('sidebar-switch', handleSidebarSwitch);
 });
 
 watch(notes, (newNotes) => {
-  if (isFirstLoad.value && newNotes.length > 0) {
+  if (forceExpandChapter.value) {
+    // 强制展开指定章节，其他章节收起
+    const targetChapter = forceExpandChapter.value;
+    const groups = new Set<string>();
+    groups.add(targetChapter);
+    expandedGroups.value = groups;
+    forceExpandChapter.value = null;
+    isFirstLoad.value = false;
+  } else if (isFirstLoad.value && newNotes.length > 0) {
     // 首次加载到数据时展开所有分组
     const groups = new Set<string>();
     newNotes.forEach(note => {
@@ -228,6 +244,7 @@ watch(notes, (newNotes) => {
 
 onUnmounted(() => {
   eventBus.off('note-saved', handleNoteSaved);
+  eventBus.off('sidebar-switch', handleSidebarSwitch);
 });
 
 defineExpose({

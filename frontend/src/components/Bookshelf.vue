@@ -1545,7 +1545,7 @@ const handleCoverError = (event: Event, item: any) => {
         </button>
       </div>
       
-      <div v-else class="book-grid" :style="{ gridTemplateColumns: `repeat(${settingsStore.bookshelfColumns}, minmax(0, 1fr))`, gap: `${settingsStore.coverGap}px` }">
+      <div v-else class="book-grid" :style="{ gridTemplateColumns: `repeat(${settingsStore.bookshelfColumns}, minmax(0, 1fr))`, columnGap: `${settingsStore.coverGap}px` }">
         <template v-for="item in filteredItems" :key="item.id">
           <!-- 分组卡片 -->
           <div
@@ -2451,7 +2451,6 @@ const handleCoverError = (event: Event, item: any) => {
   padding: 0px 8px 0px;
   line-height: 1.45;
   overflow: hidden;
-  min-height: calc(0.87rem * 1.45 * 2);
 
   /* WebKit 内核（Chrome/Edge/Safari） */
   display: -webkit-box;

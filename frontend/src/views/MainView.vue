@@ -31,10 +31,8 @@ import CloudIcon from '../components/icons/CloudIcon.vue'
 import DownloadIcon from '../components/icons/DownloadIcon.vue'
 import BookmarkIcon from '../components/icons/BookmarkIcon.vue'
 import NoteIcon from '../components/icons/NoteIcon.vue'
-import SaveIcon from '../components/icons/SaveIcon.vue'
 import LayoutGridIcon from '../components/icons/LayoutGridIcon.vue'
 import IllustrationIcon from '../components/icons/IllustrationIcon.vue'
-import TranslateIcon from '../components/icons/TranslateIcon.vue'
 import SearchIcon from '../components/icons/SearchIcon.vue'
 import SunIcon from '../components/icons/SunIcon.vue'
 import MoonIcon from '../components/icons/MoonIcon.vue'
@@ -290,6 +288,99 @@ const handleShowAlert = (e: CustomEvent) => {
 const draggedTabId = ref<string | null>(null)
 const dragOverTabId = ref<string | null>(null)
 const dragOverPaneId = ref<string | null>(null)
+
+// 功能栏按钮配置
+const funcButtonConfigs = [
+  { id: 'shelf', sidebar: 'shelf', icon: 'book', title: '书架' },
+  { id: 'toc', sidebar: 'toc', icon: 'list', title: '目录' },
+  { id: 'layout', sidebar: 'layout', icon: 'palette', title: '排版' },
+  { id: 'theme', sidebar: 'theme', icon: 'theme', title: '主题' },
+  { id: 'bookshelf-layout', sidebar: 'bookshelf-layout', icon: 'layout-grid', title: '书架布局' },
+  { id: 'illustration', sidebar: 'illustration', icon: 'illustration', title: '插画' },
+  { id: 'bookmarks', sidebar: 'bookmarks', icon: 'bookmark', title: '书签' },
+  { id: 'search', sidebar: 'search', icon: 'search', title: '搜索' },
+  { id: 'notes', sidebar: 'notes', icon: 'note', title: '笔记' }
+]
+
+// 功能栏按钮排序（持久化）
+const funcButtonOrder = ref<string[]>(
+  JSON.parse(localStorage.getItem('funcButtonOrder') || JSON.stringify(funcButtonConfigs.map(b => b.id)))
+)
+
+const orderedFuncButtons = computed(() => {
+  return funcButtonOrder.value
+    .map(id => funcButtonConfigs.find(b => b.id === id))
+    .filter((b): b is typeof funcButtonConfigs[0] => !!b)
+})
+
+const getButtonIcon = (iconName: string) => {
+  switch (iconName) {
+    case 'book': return BookIcon
+    case 'list': return ListIcon
+    case 'palette': return PaletteIcon
+    case 'theme': return null
+    case 'layout-grid': return LayoutGridIcon
+    case 'illustration': return IllustrationIcon
+    case 'bookmark': return BookmarkIcon
+    case 'search': return SearchIcon
+    case 'note': return NoteIcon
+    default: return BookIcon
+  }
+}
+
+// 功能栏按钮拖拽排序
+const draggedFuncButtonId = ref<string | null>(null)
+const dragOverFuncButtonId = ref<string | null>(null)
+
+const handleFuncButtonDragStart = (e: DragEvent, buttonId: string) => {
+  draggedFuncButtonId.value = buttonId
+  if (e.dataTransfer) {
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('text/plain', buttonId)
+  }
+}
+
+const handleFuncButtonDragOver = (e: DragEvent, buttonId: string) => {
+  e.preventDefault()
+  if (e.dataTransfer) {
+    e.dataTransfer.dropEffect = 'move'
+  }
+  if (draggedFuncButtonId.value && draggedFuncButtonId.value !== buttonId) {
+    dragOverFuncButtonId.value = buttonId
+  }
+}
+
+const handleFuncButtonDragLeave = () => {
+  dragOverFuncButtonId.value = null
+}
+
+const handleFuncButtonDrop = (e: DragEvent, targetButtonId: string) => {
+  e.preventDefault()
+  if (!draggedFuncButtonId.value || draggedFuncButtonId.value === targetButtonId) {
+    draggedFuncButtonId.value = null
+    dragOverFuncButtonId.value = null
+    return
+  }
+
+  const newOrder = [...funcButtonOrder.value]
+  const draggedIndex = newOrder.indexOf(draggedFuncButtonId.value)
+  const targetIndex = newOrder.indexOf(targetButtonId)
+
+  if (draggedIndex !== -1 && targetIndex !== -1) {
+    newOrder.splice(draggedIndex, 1)
+    newOrder.splice(targetIndex, 0, draggedFuncButtonId.value)
+    funcButtonOrder.value = newOrder
+    localStorage.setItem('funcButtonOrder', JSON.stringify(newOrder))
+  }
+
+  draggedFuncButtonId.value = null
+  dragOverFuncButtonId.value = null
+}
+
+const handleFuncButtonDragEnd = () => {
+  draggedFuncButtonId.value = null
+  dragOverFuncButtonId.value = null
+}
 
 // 右键菜单相关
 const contextMenuVisible = ref(false)
@@ -1330,80 +1421,29 @@ onUnmounted(() => {
     <aside class="function-bar">
       <div class="function-items">
         <button 
+          v-for="btn in orderedFuncButtons"
+          :key="btn.id"
           class="func-btn" 
-          :class="{ active: activeSidebar === 'shelf' }"
-          @click="switchSidebar('shelf')" 
-          title="书架"
-        ><BookIcon :size="22" /></button>
-        <button 
-          class="func-btn" 
-          :class="{ active: activeSidebar === 'toc' }"
-          @click="switchSidebar('toc')" 
-          title="目录"
-        ><ListIcon :size="22" /></button>
-        <button 
-          class="func-btn" 
-          :class="{ active: activeSidebar === 'layout' }"
-          @click="switchSidebar('layout')" 
-          title="排版"
-        ><PaletteIcon :size="22" /></button>
-        <button 
-          class="func-btn" 
-          :class="{ active: activeSidebar === 'theme' }"
-          @click="switchSidebar('theme')" 
-          title="主题"
+          :class="{ 
+            active: activeSidebar === btn.sidebar,
+            dragging: draggedFuncButtonId === btn.id,
+            'drag-over': dragOverFuncButtonId === btn.id
+          }"
+          @click="switchSidebar(btn.sidebar)" 
+          :title="btn.title"
+          draggable="true"
+          @dragstart="(e) => handleFuncButtonDragStart(e, btn.id)"
+          @dragover="(e) => handleFuncButtonDragOver(e, btn.id)"
+          @dragleave="handleFuncButtonDragLeave"
+          @drop="(e) => handleFuncButtonDrop(e, btn.id)"
+          @dragend="handleFuncButtonDragEnd"
         >
-          <SunIcon v-if="!isDarkTheme" :size="22" />
-          <MoonIcon v-else :size="22" />
+          <template v-if="btn.icon === 'theme'">
+            <SunIcon v-if="!isDarkTheme" :size="22" />
+            <MoonIcon v-else :size="22" />
+          </template>
+          <component v-else :is="getButtonIcon(btn.icon)" :size="22" />
         </button>
-        <button 
-          class="func-btn" 
-          :class="{ active: activeSidebar === 'bookshelf-layout' }"
-          @click="switchSidebar('bookshelf-layout')" 
-          title="书架布局"
-        ><LayoutGridIcon :size="22" /></button>
-        <button 
-          class="func-btn" 
-          :class="{ active: activeSidebar === 'illustration' }"
-          @click="switchSidebar('illustration')" 
-          title="插画"
-        ><IllustrationIcon :size="22" /></button>
-        <button 
-          class="func-btn" 
-          :class="{ active: activeSidebar === 'bookmarks' }"
-          @click="switchSidebar('bookmarks')" 
-          title="书签"
-        ><BookmarkIcon :size="22" /></button>
-        <button 
-          class="func-btn" 
-          :class="{ active: activeSidebar === 'translate' }"
-          @click="switchSidebar('translate')" 
-          title="翻译"
-        ><TranslateIcon :size="22" /></button>
-        <button 
-          class="func-btn" 
-          :class="{ active: activeSidebar === 'search' }"
-          @click="switchSidebar('search')" 
-          title="搜索"
-        ><SearchIcon :size="22" /></button>
-        <button 
-          class="func-btn" 
-          :class="{ active: activeSidebar === 'notes' }"
-          @click="switchSidebar('notes')" 
-          title="笔记"
-        ><NoteIcon :size="22" /></button>
-        <button 
-          v-if="false"
-          class="func-btn" 
-          @click="handleRestoreProgress" 
-          title="恢复阅读进度"
-        ><BookmarkIcon :size="22" /></button>
-        <button 
-          v-if="false"
-          class="func-btn" 
-          @click="handleSaveProgress" 
-          title="保存阅读进度"
-        ><SaveIcon :size="22" /></button>
       </div>
       
       <div class="function-bottom">
@@ -1640,6 +1680,7 @@ onUnmounted(() => {
                 @ready="handleReaderReady"
                 @bookmark-saved="handleBookmarkSaved"
                 @note-saved="handleNoteSaved"
+                @switch-sidebar="switchSidebar"
               />
             </template>
           </div>
@@ -1705,6 +1746,7 @@ onUnmounted(() => {
                       @ready="handleReaderReady"
                       @bookmark-saved="handleBookmarkSaved"
                       @note-saved="handleNoteSaved"
+                      @switch-sidebar="switchSidebar"
                       :ref="(el: any) => { 
                         if (el) readerRefs.set(tab.id, el)
                         else readerRefs.delete(tab.id)
@@ -1776,6 +1818,7 @@ onUnmounted(() => {
                       @ready="handleReaderReady"
                       @bookmark-saved="handleBookmarkSaved"
                       @note-saved="handleNoteSaved"
+                      @switch-sidebar="switchSidebar"
                       :ref="(el: any) => { 
                         if (el) readerRefs.set(tab.id, el)
                         else readerRefs.delete(tab.id)
@@ -1907,6 +1950,16 @@ onUnmounted(() => {
 .func-btn.settings:hover {
   background-color: rgba(0, 0, 0, 0.05);
   color: var(--text-primary);
+}
+
+.func-btn.dragging {
+  opacity: 0.4;
+  transform: scale(0.95);
+}
+
+.func-btn.drag-over {
+  background-color: rgba(color-mix(in srgb, var(--primary-color) 50%, var(--accent-color) 50%), 0.2);
+  border: 2px dashed var(--primary-color);
 }
 
 /* 主内容区 */

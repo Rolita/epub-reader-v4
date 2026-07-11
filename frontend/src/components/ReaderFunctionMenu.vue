@@ -1,9 +1,26 @@
 <template>
   <div
     class="reader-function-menu"
-    :class="{ 'visible': visible }"
-    @mouseleave="emit('mouseleave')"
+    :class="{ 'visible': visible || isPinned }"
+    @mouseleave="handleMouseLeave"
   >
+    <!-- 固定按钮 -->
+    <button
+      @click.stop="emit('toggle-pin')"
+      class="fullscreen-toggle-btn"
+      :class="{ 'pinned': isPinned }"
+      :title="isPinned ? '取消固定' : '固定显示'"
+    >
+      <svg v-if="!isPinned" stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 24 24" height="24" width="24" xmlns="http://www.w3.org/2000/svg">
+        <path fill="none" d="M0 0h24v24H0z"></path>
+        <path d="M14 4v5c0 1.12.37 2.16 1 3H9c.65-.86 1-1.9 1-3V4h4m3-2H7c-.55 0-1 .45-1 1s.45 1 1 1h1v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7H19v-2c-1.66 0-3-1.34-3-3V4h1c.55 0 1-.45 1-1s-.45-1-1-1z"></path>
+      </svg>
+      <svg v-else stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 24 24" height="24" width="24" xmlns="http://www.w3.org/2000/svg">
+        <path fill="none" d="M0 0h24v24H0z"></path>
+        <path fill-rule="evenodd" d="M16 9V4h1c.55 0 1-.45 1-1s-.45-1-1-1H7c-.55 0-1 .45-1 1s.45 1 1 1h1v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7H19v-2c-1.66 0-3-1.34-3-3z"></path>
+      </svg>
+    </button>
+
     <!-- 全屏按钮 -->
     <button
       v-if="!isLoading && !isFullscreen"
@@ -62,6 +79,7 @@ import FullscreenExitIcon from './icons/FullscreenExitIcon.vue';
 import BookmarkIcon from './icons/BookmarkIcon.vue';
 import NoteIcon from './icons/NoteIcon.vue';
 import { saveBookmark } from '../composables/useReaderProgress';
+import { eventBus } from '../composables/useEventBus';
 
 const props = defineProps<{
   visible: boolean;
@@ -69,6 +87,7 @@ const props = defineProps<{
   isLoading: boolean;
   filePath: string;
   rendition: any;
+  isPinned: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -78,7 +97,15 @@ const emit = defineEmits<{
   (e: 'bookmarkSaved'): void;
   (e: 'copySelected'): void;
   (e: 'saveNote'): void;
+  (e: 'toggle-pin'): void;
+  (e: 'switch-sidebar', viewName: string): void;
 }>();
+
+const handleMouseLeave = () => {
+  if (!props.isPinned) {
+    emit('mouseleave');
+  }
+};
 
 const handleSaveBookmark = async () => {
   if (!props.rendition) {
@@ -90,6 +117,8 @@ const handleSaveBookmark = async () => {
   if (result) {
     console.log('书签保存成功:', result);
     emit('bookmarkSaved');
+    emit('switch-sidebar', 'bookmarks');
+    eventBus.emit('sidebar-switch', { view: 'bookmarks', chapterTitle: result.chapterTitle });
   } else {
     console.error('书签保存失败');
   }
@@ -108,7 +137,7 @@ const handleSaveBookmark = async () => {
   align-items: center;
   padding: 20px 10px; /* Adjust padding as needed, instead of padding-top */
   background: transparent; /* 初始透明 */
-  transition: background 0.3s ease, opacity 0.3s ease;
+  transition: opacity 0.3s ease;
   opacity: 0; /* 默认隐藏 */
   pointer-events: none; /* 默认不响应事件 */
   z-index: 10;
@@ -139,5 +168,11 @@ const handleSaveBookmark = async () => {
   background: var(--primary-light);
   border-color: var(--primary-color);
   transform: scale(1.05);
+}
+
+.fullscreen-toggle-btn.pinned {
+  background: var(--primary-light);
+  border-color: var(--primary-color);
+  color: var(--primary-color);
 }
 </style>

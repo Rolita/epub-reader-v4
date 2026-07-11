@@ -218,7 +218,6 @@ const handleCoverError = (event: Event, index: number) => {
   padding: 0px 8px 0px;
   line-height: 1.45;
   overflow: hidden;
-  min-height: calc(0.87rem * 1.45 * 2);
 
   /* WebKit 内核（Chrome/Edge/Safari） */
   display: -webkit-box;

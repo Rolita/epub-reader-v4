@@ -40,12 +40,15 @@
       :is-fullscreen="isFullscreen"
       :file-path="props.filePath"
       :rendition="rendition"
+      :is-pinned="isFunctionMenuPinned"
       @enter-fullscreen="enterFullscreen"
       @exit-fullscreen="exitFullscreen"
       @mouseleave="showFunctionMenu = false"
+      @toggle-pin="toggleFunctionMenuPin"
       @bookmark-saved="handleBookmarkSaved"
       @copy-selected="copySelectedText"
       @save-note="saveSelectedTextAsNote"
+      @switch-sidebar="(viewName) => emit('switch-sidebar', viewName)"
     />
 
     <!-- 图片预览组件 -->
@@ -82,6 +85,7 @@ const emit = defineEmits<{
   (e: 'ready'): void;
   (e: 'bookmark-saved'): void;
   (e: 'note-saved'): void;
+  (e: 'switch-sidebar', viewName: string): void;
 }>();
 const viewerContainer = ref<HTMLElement | null>(null);
 
@@ -866,7 +870,9 @@ const initReader = async () => {
         const iframeDoc = contents.window.document.documentElement || contents.window.document.body;
         if (iframeDoc) {
           iframeDoc.addEventListener('mouseenter', () => {
-            showFunctionMenu.value = false;
+            if (!isFunctionMenuPinned.value) {
+              showFunctionMenu.value = false;
+            }
           });
           // Note: mouseleave from iframe will naturally be caught by parent's mousemove if it re-enters the parent region
           // Or, if we want to be explicit, we could add a mouseleave here that does nothing, or relies on parent logic.
@@ -1147,11 +1153,14 @@ const enterFullscreen = () => {
 
 // 右侧功能菜单显示状态
 const showFunctionMenu = ref(false)
+const isFunctionMenuPinned = ref(false)
 
 // 鼠标移动处理
 const handleMouseMove = (e: MouseEvent) => {
   if (isMouseOnProgress.value || justLeftProgress.value) {
-    showFunctionMenu.value = false // 如果鼠标在进度条上，隐藏功能菜单
+    if (!isFunctionMenuPinned.value) {
+      showFunctionMenu.value = false
+    }
     return
   }
 
@@ -1162,9 +1171,11 @@ const handleMouseMove = (e: MouseEvent) => {
   const bottomThreshold = 100
   showProgress.value = rect.height - e.clientY < bottomThreshold
 
-  // 判断是否在右侧区域显示功能菜单
-  const rightThreshold = 150; // 右侧 150px 区域
-  showFunctionMenu.value = rect.width - e.clientX < rightThreshold;
+  // 判断是否在右侧区域显示功能菜单（未固定时）
+  if (!isFunctionMenuPinned.value) {
+    const rightThreshold = 150;
+    showFunctionMenu.value = rect.width - e.clientX < rightThreshold;
+  }
 };
 
 const handleProgressMouseEnter = () => {
@@ -1187,6 +1198,10 @@ const handleProgressMouseLeave = () => {
     justLeftProgress.value = false
     leaveProgressTimer = null
   }, 100)
+};
+
+const toggleFunctionMenuPin = () => {
+  isFunctionMenuPinned.value = !isFunctionMenuPinned.value;
 };
 
 // 窗口大小变化处理
@@ -1270,6 +1285,8 @@ const saveSelectedTextAsNote = async () => {
     if (result) {
       lastSavedNoteCfi = result.cfi;
       await handleNoteSaved(result.cfi)
+      emit('switch-sidebar', 'notes')
+      eventBus.emit('sidebar-switch', { view: 'notes', chapterTitle: result.chapterTitle });
     } else {
       console.error('笔记保存失败：saveNote 返回 null')
     }

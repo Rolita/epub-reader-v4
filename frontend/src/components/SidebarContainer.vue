@@ -40,7 +40,6 @@ import WebDavSidebar from './WebDavSidebar.vue';
 import BookshelfLayoutSidebar from './BookshelfLayoutSidebar.vue';
 import IllustrationSidebar from './IllustrationSidebar.vue';
 import BookmarksSidebar from './BookmarksSidebar.vue';
-import TranslateSidebar from './TranslateSidebar.vue';
 import SearchSidebar from './SearchSidebar.vue';
 import NotesSidebar from './NotesSidebar.vue';
 import NoteEditSidebar from './NoteEditSidebar.vue';
@@ -147,11 +146,6 @@ const switchView = (viewName: string) => {
     componentProps.value = {
       filePath: props.filePath
     };
-    settingsStore.showIllustrationSidebar = false;
-  }
-  if (viewName === 'translate') {
-    currentComponent.value = TranslateSidebar;
-    componentKey.value = 'translate';
     settingsStore.showIllustrationSidebar = false;
   }
   if (viewName === 'search') {

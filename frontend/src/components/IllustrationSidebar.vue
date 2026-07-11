@@ -43,32 +43,13 @@ const isGroupExpanded = (chapterHref: string) => {
   return expandedGroups.value.has(chapterHref)
 }
 
-// 监听插画变化，保持展开状态
+// 监听插画变化，默认展开所有分组
 watch(() => settingsStore.illustrations, (newIllustrations) => {
-  if (isFirstLoad.value && newIllustrations.length > 0) {
-    // 首次加载到数据时展开所有分组
-    const groups = new Set<string>()
-    for (const illustration of newIllustrations) {
-      groups.add(illustration.chapterHref || 'unknown')
-    }
-    expandedGroups.value = groups
-    isFirstLoad.value = false
-  } else if (!isFirstLoad.value) {
-    // 后续更新时，保持当前展开状态
-    const currentGroups = new Set<string>()
-    for (const illustration of newIllustrations) {
-      currentGroups.add(illustration.chapterHref || 'unknown')
-    }
-    
-    // 移除不存在的分组，保留已有的分组展开状态
-    const newExpanded = new Set<string>()
-    expandedGroups.value.forEach(group => {
-      if (currentGroups.has(group)) {
-        newExpanded.add(group)
-      }
-    })
-    expandedGroups.value = newExpanded
+  const groups = new Set<string>()
+  for (const illustration of newIllustrations) {
+    groups.add(illustration.chapterHref || 'unknown')
   }
+  expandedGroups.value = groups
 }, { immediate: true })
 
 const emit = defineEmits<{

@@ -1062,7 +1062,7 @@ const handleClickOutsideContextMenu = (event: MouseEvent) => {
         </button>
       </div>
       
-      <div v-else class="book-grid" :style="{ gridTemplateColumns: `repeat(${settingsStore.bookshelfColumns}, minmax(0, 1fr))`, gap: `${settingsStore.coverGap}px` }">
+      <div v-else class="book-grid" :style="{ gridTemplateColumns: `repeat(${settingsStore.bookshelfColumns}, minmax(0, 1fr))`, columnGap: `${settingsStore.coverGap}px` }">
         <div 
           v-for="book in filteredBooks" 
           :key="book.id" 

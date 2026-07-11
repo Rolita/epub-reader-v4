@@ -160,14 +160,30 @@ const handleBookmarkSaved = () => {
 };
 
 const isFirstLoad = ref(true);
+const forceExpandChapter = ref<string | null>(null);
+
+const handleSidebarSwitch = (data: any) => {
+  if (data && data.view === 'bookmarks' && data.chapterTitle) {
+    forceExpandChapter.value = data.chapterTitle;
+  }
+};
 
 onMounted(() => {
   loadBookmarks();
   eventBus.on('bookmark-saved', handleBookmarkSaved);
+  eventBus.on('sidebar-switch', handleSidebarSwitch);
 });
 
 watch(bookmarks, (newBookmarks) => {
-  if (isFirstLoad.value && newBookmarks.length > 0) {
+  if (forceExpandChapter.value) {
+    // 强制展开指定章节，其他章节收起
+    const targetChapter = forceExpandChapter.value;
+    const groups = new Set<string>();
+    groups.add(targetChapter);
+    expandedGroups.value = groups;
+    forceExpandChapter.value = null;
+    isFirstLoad.value = false;
+  } else if (isFirstLoad.value && newBookmarks.length > 0) {
     // 首次加载到数据时展开所有分组
     const groups = new Set<string>();
     newBookmarks.forEach(bookmark => {
@@ -195,6 +211,7 @@ watch(bookmarks, (newBookmarks) => {
 
 onUnmounted(() => {
   eventBus.off('bookmark-saved', handleBookmarkSaved);
+  eventBus.off('sidebar-switch', handleSidebarSwitch);
 });
 
 defineExpose({
